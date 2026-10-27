@@ -1,0 +1,61 @@
+#!/usr/bin/env node
+// Stub `agy` (the Antigravity CLI) for $0 testing. Speaks the documented
+// `agy -p --output-format stream-json` protocol: one init event, a
+// step_update per step, a final result with token usage and never a dollar
+// figure. Answers `--version` and `models` for the setup check.
+// Env: STUB_TURNS (3 tool steps), STUB_DELAY_MS (300), STUB_NO_RESULT=1,
+//      STUB_DENY=1 (the last tool is refused for want of approval),
+//      STUB_EXIT, STUB_GEMINI_LOGIN=ok (default) | none, STUB_GEMINI_VERSION.
+//      STUB_SCRIPT plays org calls during the run. See tools/stub-org.mjs.
+const turns = Number(process.env.STUB_TURNS ?? 3);
+const delay = Number(process.env.STUB_DELAY_MS ?? 300);
+const args = process.argv.slice(2);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+const flag = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
+if (args.includes("--version")) { process.stdout.write((process.env.STUB_GEMINI_VERSION ?? "0.0.0 (stub-gemini)") + "\n"); process.exit(0); }
+if (args[0] === "models") {
+  if ((process.env.STUB_GEMINI_LOGIN ?? "ok") === "none") {
+    process.stdout.write("Fetching available models...\nError: Please sign in to view available models. Launch the CLI without arguments to sign in.\n");
+    process.exit(1);
+  }
+  process.stdout.write("gemini-2.5-pro\ngemini-2.5-flash\n");
+  process.exit(0);
+}
+if (!args.includes("-p") || flag("--output-format") !== "stream-json" || !["plan", "accept-edits"].includes(flag("--mode") ?? "")) {
+  process.stderr.write("stub-gemini: expected `-p <prompt> --output-format stream-json --mode plan|accept-edits`\n");
+  process.exit(64);
+}
+if (args.includes("--dangerously-skip-permissions")) {
+  process.stderr.write("stub-gemini: CEO must never skip permissions\n");
+  process.exit(64);
+}
+const prompt = flag("-p");
+const task = prompt.includes("The task:") ? prompt.split("The task:").pop().trim() : prompt;
+(async () => {
+  out({ event: "init", cwd: process.cwd(), tools: ["read_file", "run_command", "write_file"], permission_mode: flag("--mode") });
+  const org = await import(new URL("./stub-org.mjs", import.meta.url));
+  let n = 0;
+  const played = org.script({
+    provider: "gemini", args, prompt: task, resumed: args.includes("--conversation"),
+    onCall: (tool, input, result) => out({ event: "step_update", step: { step_id: `m${++n}`, step_type: "tool", state: "DONE", duration_seconds: 0.1, tool_info: { name: tool, parameters: input, output: result } } }),
+    onSay: (text) => out({ event: "step_update", step: { step_id: `y${++n}`, step_type: "agent_response", state: "DONE", text_delta: `${text}\n`, usage: { input_tokens: 200, output_tokens: 30 } } }),
+  });
+  for (let i = 1; i <= turns; i++) {
+    await sleep(delay);
+    const denied = process.env.STUB_DENY && i === turns;
+    const tool = { name: denied ? "run_command" : "read_file", parameters: denied ? { command: "rm -rf build" } : { path: `src/file${i}.ts` } };
+    out({ event: "step_update", step: { step_id: `s${i}`, step_type: "tool", state: "ACTIVE", tool_info: tool } });
+    out({ event: "step_update", step: { step_id: `s${i}`, step_type: "tool", state: "DONE", duration_seconds: 0.1,
+      tool_info: denied ? { ...tool, error: { code: "PERMISSION_DENIED", message: "permission denied: the command requires approval" } } : { ...tool, output: "ok" } } });
+    out({ event: "step_update", step: { step_id: `r${i}`, step_type: "agent_response", state: "DONE",
+      text_delta: `${played.line(i) ?? `Turn ${i}: working on "${task.slice(0, 40)}" in ${flag("--mode")} mode${flag("--model") ? ` as ${flag("--model")}` : ""}.`}\n`, usage: { input_tokens: 1000, output_tokens: 50 } } });
+    await played.atStep(i);
+  }
+  played.close();
+  if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
+  await sleep(delay);
+  out({ event: "result", result: { conversation_id: flag("--conversation") ?? "stub-conv-" + process.pid, status: "SUCCESS", response: played.done ?? `Done: ${task.slice(0, 60)}`, duration_seconds: 1.2, num_turns: turns,
+    usage: { input_tokens: turns * 1000, output_tokens: turns * 50, thinking_tokens: turns * 20, cache_read_tokens: turns * 200, total_tokens: turns * 1270 } } });
+  process.exit(Number(process.env.STUB_EXIT ?? 0));
+})();

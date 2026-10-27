@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+// Stub `gh` for $0 testing: the GitHub CLI calls CEO makes, answered locally.
+// Env: STUB_GH_LOGIN=ok (default) | none. STUB_GH_ACCOUNT, default demo-dev. STUB_GH_REPO, default acme/orbit.
+//      STUB_GH_LOG=<file> records each pull request created, with its body.
+const args = process.argv.slice(2);
+const out = (s) => process.stdout.write(typeof s === "string" ? `${s}\n` : `${JSON.stringify(s)}\n`);
+const account = process.env.STUB_GH_ACCOUNT ?? "demo-dev";
+const repo = process.env.STUB_GH_REPO ?? "acme/orbit";
+const signedIn = (process.env.STUB_GH_LOGIN ?? "ok") !== "none";
+const issues = [
+  { number: 42, title: "fetchWithRetry resets the backoff before the last attempt", labels: [{ name: "bug" }], assignees: [], updatedAt: "2026-10-24T10:00:00Z",
+    body: "The backoff counter resets on success inside the loop, so the last attempt runs with no delay.\n\nSteps: run test/retry.test.js ten times. One run in ten fails.\n\nExpected: the reset happens only after a successful attempt returns.",
+    comments: [{ author: { login: "maria" }, body: "Seen on CI twice this week. src/retry.ts:12 looks like the culprit." }] },
+  { number: 38, title: "Document the retry options in the README", labels: [{ name: "docs" }], assignees: [{ login: "demo-dev" }], updatedAt: "2026-10-22T09:00:00Z",
+    body: "maxAttempts, baseDelayMs and jitter are undocumented.", comments: [] },
+  { number: 35, title: "Flaky: retry.test.js fails one run in ten", labels: [{ name: "bug" }, { name: "flaky" }], assignees: [], updatedAt: "2026-10-20T08:00:00Z",
+    body: "Fails intermittently on CI with a timeout in the third attempt.", comments: [] },
+];
+const pick = (o, fields) => Object.fromEntries(fields.map((f) => [f, o[f]]));
+const flag = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
+(async () => {
+  if (args[0] === "--version") return out("gh version 2.85.0 (stub)");
+  if (args[0] === "auth" && args[1] === "status") {
+    if (!signedIn) { process.stderr.write("You are not logged into any GitHub hosts. To log in, run: gh auth login\n"); process.exit(1); }
+    process.stderr.write(`github.com\n  ✓ Logged in to github.com account ${account} (keyring)\n`);
+    return;
+  }
+  if (!signedIn) { process.stderr.write("To get started with GitHub CLI, please run: gh auth login\n"); process.exit(4); }
+  if (args[0] === "repo" && args[1] === "view") return out(repo);
+  if (args[0] === "issue" && args[1] === "list") {
+    const fields = (flag("--json") ?? "number,title").split(",");
+    const label = flag("--label");
+    return out(issues.filter((i) => !label || i.labels.some((l) => l.name === label)).map((i) => pick({ ...i, url: `https://github.com/${repo}/issues/${i.number}` }, fields)));
+  }
+  if ((args[0] === "issue" || args[0] === "pr") && args[1] === "view") {
+    const n = Number(args[2]);
+    const i = issues.find((x) => x.number === n) ?? { number: n, title: `Change ${n}`, labels: [], body: "A change.", comments: [] };
+    return out({ ...i, state: "OPEN", url: `https://github.com/${repo}/${args[0] === "pr" ? "pull" : "issues"}/${n}`, files: [{ path: "src/retry.ts" }], headRefName: "ceo/implementer" });
+  }
+  if (args[0] === "pr" && args[1] === "diff") return out("diff --git a/src/retry.ts b/src/retry.ts\n-  attempts = 0;\n+  if (ok) attempts = 0;");
+  if (args[0] === "pr" && args[1] === "create") {
+    let body = "";
+    for await (const c of process.stdin) body += c;
+    if (process.env.STUB_GH_LOG) {
+      const { appendFileSync } = await import("node:fs");
+      appendFileSync(process.env.STUB_GH_LOG, JSON.stringify({ head: flag("--head"), base: flag("--base"), title: flag("--title"), body }) + "\n");
+    }
+    return out(`https://github.com/${repo}/pull/7`);
+  }
+  process.stderr.write(`stub-gh: no answer for ${args.join(" ")}\n`);
+  process.exit(1);
+})();

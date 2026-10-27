@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The version comes from package.json's packageManager field.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: npm pack --dry-run
+      # Specs run against real ledgers in temp dirs. No model is ever called.
+      # The specs point CEO_CLAUDE_BIN, CEO_CODEX_BIN and CEO_GEMINI_BIN at
+      # the stubs in tools/. Each stub speaks the CLI's line protocol. No
+      # stub bills anyone.
+      - run: pnpm test
+      - name: CLI smoke test, all providers (stubs, $0)
+        run: |
+          export CEO_CLAUDE_BIN=$GITHUB_WORKSPACE/tools/stub-claude CEO_CODEX_BIN=$GITHUB_WORKSPACE/tools/stub-codex CEO_GEMINI_BIN=$GITHUB_WORKSPACE/tools/stub-gemini
+          export CEO_HOME=/tmp/ceo-home CODEX_HOME=/tmp/codex-home STUB_DELAY_MS=20
+          export CLAUDE_CODE_OAUTH_TOKEN=stub STUB_CODEX_LOGIN=chatgpt STUB_GEMINI_LOGIN=ok CEO_REQUIRE_STUBS=1
+          mkdir -p /tmp/fx /tmp/codex-home && cd /tmp/fx && git init -q && git -c user.email=ci@x -c user.name=ci commit -q --allow-empty -m init
+          CEO="node $GITHUB_WORKSPACE/dist/cli.js"
+          $CEO setup | grep -q "Agents can run on: claude, codex, gemini"
+          $CEO op init '{}' | grep -q '"ok":true'
+          $CEO op hire '{"name":"reader","role":"Read the codebase and report on it.","budgetUsd":1,"autonomy":"observe"}' | grep -q '"provider":"claude"'
+          $CEO op hire '{"name":"coder","role":"Implement what the queue asks for.","provider":"codex","budgetUsd":1,"autonomy":"execute"}' | grep -q '"model":"gpt-5-codex"'
+          $CEO op compile '{"agent":"coder"}' | grep -q '"enforcement":\["sandbox workspace-write","approvals never"\]'
+          $CEO op hire '{"name":"analyst","role":"Read the code and report what it does.","provider":"gemini","budgetUsd":1,"autonomy":"observe"}' | grep -q '"model":"gemini"'
+          $CEO op compile '{"agent":"analyst"}' | grep -q '"enforcement":\["mode plan"\]'
+          $CEO op compile '{"agent":"reader"}' | grep -q '"tools":\["Read","Grep","Glob","WebFetch","WebSearch"\]'
+          B=$($CEO op delegate_begin '{"agent":"reader","task":"ci smoke"}')
+          H=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(process.argv[1]).handle))" "$B")
+          $CEO op delegate_end "{\"handle\":$H,\"inputTokens\":1000,\"outputTokens\":50,\"model\":\"claude-sonnet-4-6\",\"output\":\"done\"}" | grep -q '"costIsEstimate":true'
+          $CEO op delegate_end "{\"handle\":$H,\"inputTokens\":1,\"outputTokens\":1}" | grep -q '"duplicate":true'
+          $CEO task add coder ! add the changelog | grep -q Queued
+          $CEO json | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); if(!d.verify.ok||d.agents.length!==3||d.agents[0].spentUsd<=0) process.exit(1)"
+          $CEO billing
+          REFLEX_HOME=/tmp/noreflex CLAUDE_CONFIG_DIR=/tmp/noclaude $CEO suggest --json | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); if(!d.team.some(s=>s.name==='scout')) process.exit(1)"
+          STUB_CODEX_LOGIN=none $CEO setup | grep -q "codex login" && ! STUB_CODEX_LOGIN=none STUB_GEMINI_LOGIN=none CEO_CLAUDE_BIN=/nonexistent $CEO setup
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The version comes from package.json's packageManager field.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile && pnpm build
+      - name: Install Claude Code
+        run: npm i -g @anthropic-ai/claude-code
+      - name: Validate the optional Claude Code companion plugin
+        run: claude plugin validate .

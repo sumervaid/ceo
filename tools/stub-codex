@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+// Stub `codex` for $0 testing. Emits the `codex exec --json` JSONL protocol.
+// Env: STUB_TURNS, default 3 command items. STUB_DELAY_MS, default 300.
+//      STUB_NO_RESULT=1 never emits turn.completed. STUB_DENY=1 has one command
+//      denied by the sandbox. STUB_EXIT sets the exit code.
+// STUB_SCRIPT plays org calls during the run. See tools/stub-org.mjs.
+// Answers `--version` and `login status` for the setup check. Asserts the flags CEO must pass: --json, --sandbox, approval_policy="never".
+const turns = Number(process.env.STUB_TURNS ?? 3);
+const delay = Number(process.env.STUB_DELAY_MS ?? 300);
+const args = process.argv.slice(2);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+const flag = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
+if (args.includes("--version")) { process.stdout.write((process.env.STUB_CODEX_VERSION ?? "codex-cli 0.0.0 (stub)") + "\n"); process.exit(0); }
+// `codex login status`, as the setup check reads it. STUB_CODEX_LOGIN: chatgpt, the default, or apikey or none
+if (args[0] === "login" && args[1] === "status") {
+  const mode = process.env.STUB_CODEX_LOGIN ?? "chatgpt";
+  if (mode === "none") { process.stderr.write("Not logged in\n"); process.exit(1); }
+  const who = process.env.STUB_CODEX_EMAIL ? ` (${process.env.STUB_CODEX_EMAIL})` : "";
+  process.stdout.write(mode === "apikey" ? "Logged in using an API key - sk-***\n" : `Logged in using ChatGPT${who}\n`);
+  process.exit(0);
+}
+// `exec resume <thread> …`: the same protocol on the same thread id.
+const resumed = args[0] === "exec" && args[1] === "resume" ? args[2] : null;
+if (resumed) args.splice(1, 2);
+if (args[0] !== "exec" || !args.includes("--json") || !args.includes("--sandbox")) {
+  process.stderr.write("stub-codex: expected `exec --json --sandbox <mode> …`\n");
+  process.exit(64);
+}
+if (!args.some((a, i) => args[i - 1] === "-c" && a === 'approval_policy="never"')) {
+  process.stderr.write("stub-codex: approval_policy must be never for a headless run\n");
+  process.exit(64);
+}
+let task = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (c) => (task += c));
+process.stdin.on("end", async () => {
+  out({ type: "thread.started", thread_id: resumed ?? "stub-thread-" + process.pid });
+  out({ type: "turn.started" });
+  const org = await import(new URL("./stub-org.mjs", import.meta.url));
+  let n = 0;
+  const played = org.script({
+    provider: "codex", args, prompt: task, resumed: Boolean(resumed),
+    onCall: (tool, input, result) => out({ type: "item.completed", item: { id: `mcp_${++n}`, type: "mcp_tool_call", server: "org", tool, arguments: input, result, status: "completed" } }),
+    onSay: (text) => out({ type: "item.completed", item: { id: `say_${++n}`, type: "agent_message", text } }),
+  });
+  for (let i = 1; i <= turns; i++) {
+    await sleep(delay);
+    const id = `item_${i}`;
+    const command = `bash -lc 'ls src/file${i}.ts'`;
+    out({ type: "item.started", item: { id, type: "command_execution", command, aggregated_output: "", status: "in_progress" } });
+    const denied = process.env.STUB_DENY && i === turns;
+    out({ type: "item.completed", item: { id, type: "command_execution", command,
+      aggregated_output: denied ? "Command denied by sandbox: cannot write outside the workspace" : `src/file${i}.ts\n`,
+      exit_code: denied ? 1 : 0, status: denied ? "failed" : "completed" } });
+    out({ type: "item.completed", item: { id: `msg_${i}`, type: "agent_message",
+      text: played.line(i) ?? `Turn ${i}: working on "${task.trim().slice(0, 40)}" with ${flag("--sandbox")} sandbox as ${flag("--model")}.` } });
+    await played.atStep(i);
+  }
+  played.close();
+  if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
+  await sleep(delay);
+  out({ type: "item.completed", item: { id: "final", type: "agent_message", text: played.done ?? `Done: ${task.trim().slice(0, 60)}` } });
+  out({ type: "turn.completed", usage: { input_tokens: turns * 1000, cached_input_tokens: turns * 200, output_tokens: turns * 50 } });
+  process.exit(Number(process.env.STUB_EXIT ?? 0));
+});

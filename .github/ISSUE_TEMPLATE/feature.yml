@@ -1,0 +1,20 @@
+name: Feature
+description: Something CEO should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: job
+    attributes:
+      label: The job
+      description: What you were trying to get done when you wanted this, in a sentence or two. The job matters more than the feature. There may be a better feature for it.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today instead
+  - type: textarea
+    id: ledger
+    attributes:
+      label: Ledger and autonomy
+      description: Would this write to the ledger, change what an agent is permitted to do, or change how cost is recorded? ARCHITECTURE.md lists five invariants. Say if one is touched.

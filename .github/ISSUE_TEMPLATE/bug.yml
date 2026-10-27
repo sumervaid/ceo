@@ -1,0 +1,36 @@
+name: Bug
+description: Something CEO did that it should not have, or did not do that it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, what you expected. Paste the status bar line or the flash message if there was one.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: ceo setup
+      description: Paste the output of `ceo setup` and `ceo --version`. From a source checkout, paste `node dist/cli.js --help` instead.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: ledger
+    attributes:
+      label: Ledger tail, if a run was involved
+      description: The last few lines of `.ceo/ledger.jsonl`. Redact anything private. The `task` field is your words.
+      render: json
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options: [claude, codex, gemini, several, not provider-related]
+  - type: checkboxes
+    id: money
+    attributes:
+      label: Money
+      options:
+        - label: The ledger recorded a cost that does not match what was actually spent. Say which way in the description. This is treated as the most serious kind of bug.

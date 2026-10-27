@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="300" viewBox="0 0 960 300" role="img" aria-label="CEO: a team of AI agents that work with each other, on Claude, Codex and Gemini, through one ledger">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#11161d"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#39c5cf"/>
+      <stop offset="1" stop-color="#3fb950"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="300" rx="18" fill="url(#bg)"/>
+  <g transform="translate(80 0)">
+
+  <!-- three agents meet at the org -->
+  <g stroke-width="2.5" fill="none" stroke-linecap="round">
+    <path d="M 150 86 C 205 86, 215 150, 268 150" stroke="#39c5cf" opacity="0.9"/>
+    <path d="M 150 150 L 268 150" stroke="#3fb950" opacity="0.9"/>
+    <path d="M 150 214 C 205 214, 215 150, 268 150" stroke="#58a6ff" opacity="0.9"/>
+  </g>
+  <g font-family="Menlo, SFMono-Regular, Consolas, 'Liberation Mono', 'DejaVu Sans Mono', monospace" font-size="14" text-anchor="end">
+    <circle cx="130" cy="86" r="12" fill="#39c5cf"/>
+    <circle cx="130" cy="150" r="12" fill="#3fb950"/>
+    <circle cx="130" cy="214" r="12" fill="#58a6ff"/>
+    <text x="108" y="91" fill="#39c5cf">claude</text>
+    <text x="108" y="155" fill="#3fb950">codex</text>
+    <text x="108" y="219" fill="#58a6ff">gemini</text>
+  </g>
+  <g transform="translate(300 150) rotate(45)">
+    <rect x="-22" y="-22" width="44" height="44" rx="6" fill="url(#mark)"/>
+  </g>
+
+  <g font-family="Menlo, SFMono-Regular, Consolas, 'Liberation Mono', 'DejaVu Sans Mono', monospace">
+    <text x="400" y="140" font-size="76" font-weight="700" fill="#e6edf3">CEO</text>
+    <text x="402" y="180" font-size="18" fill="#8b949e">agents that work with each other</text>
+    <text x="402" y="210" font-size="14" fill="#6e7681">three providers · one org · one ledger</text>
+  </g>
+  </g>
+</svg>

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ceo",
+  "owner": {
+    "name": "Sumer Vaid"
+  },
+  "metadata": {
+    "description": "Run a team of AI agents from the terminal with a tamper-evident ledger of every delegation and dollar.",
+    "version": "0.4.0"
+  },
+  "plugins": [
+    {
+      "name": "ceo",
+      "source": "./",
+      "description": "Hire agents with role briefs and enforced autonomy, queue and delegate work, audit output, and keep a hash-chained ledger of what each agent cost and was permitted to do. Pairs with the standalone `ceo` dashboard.",
+      "version": "0.4.0",
+      "category": "productivity",
+      "keywords": ["agents", "orchestration", "delegation", "ledger", "budget", "audit", "tui"]
+    }
+  ]
+}

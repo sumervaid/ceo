@@ -1,0 +1,77 @@
+#!/usr/bin/env node
+// Stub `claude` for $0 testing. Emits the stream-json line protocol.
+// Env: STUB_TURNS, default 3. STUB_DELAY_MS, default 300. STUB_NO_RESULT=1 never settles. STUB_DENY=Write emits a denial. STUB_EXIT sets the exit code.
+// STUB_CHAT=<file.json> scripts a chief of staff: [{ "match": "words", "calls": [{ "tool": "org_hire", "args": {} }], "reply": "text" }].
+// The first entry whose match appears in the prompt runs. Its calls go to the real org MCP server named by --mcp-config, over stdio.
+// STUB_SCRIPT plays org calls during an ordinary run. See tools/stub-org.mjs.
+if (process.argv.includes("--version")) { process.stdout.write((process.env.STUB_VERSION ?? "0.0.0 (stub-claude)") + "\n"); process.exit(0); }
+// Loaded in main: the package is ESM, and an extensionless script may run as either kind.
+let readFileSync;
+const turns = Number(process.env.STUB_TURNS ?? 3);
+const delay = Number(process.env.STUB_DELAY_MS ?? 300);
+const args = process.argv.slice(2);
+const task = args[args.indexOf("-p") + 1] ?? "";
+const session = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : "stub-session-" + process.pid;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+
+function script() {
+  if (!process.env.STUB_CHAT) return null;
+  try {
+    const entries = JSON.parse(readFileSync(process.env.STUB_CHAT, "utf8"));
+    const said = task.toLowerCase();
+    // Match against the operator's words, which come last in a chat prompt.
+    const words = said.includes("the operator says:") ? said.slice(said.lastIndexOf("the operator says:")) : said;
+    return entries.find((e) => words.includes(String(e.match).toLowerCase())) ?? null;
+  } catch { return null; }
+}
+
+(async () => {
+  ({ readFileSync } = await import("node:fs"));
+  const org = await import(new URL("./stub-org.mjs", import.meta.url));
+  out({ type: "system", subtype: "init", model: "stub", tools: [], session_id: session });
+  const scripted = script();
+  if (scripted) {
+    const found = (scripted.calls ?? []).length > 0 ? org.orgServer("claude", args) : null;
+    const server = found ? await org.connect(found) : null;
+    for (const c of scripted.calls ?? []) {
+      await sleep(delay);
+      out({ type: "assistant", message: { usage: { input_tokens: 400, output_tokens: 40 }, content: [{ type: "tool_use", name: `mcp__org__${c.tool}`, input: c.args ?? {} }] } });
+      const text = server ? await server.call(c.tool, c.args ?? {}) : "no org server";
+      out({ type: "user", message: { content: [{ type: "tool_result", content: text }] } });
+    }
+    server?.close();
+    const reply = String(scripted.reply ?? "Done.");
+    for (const piece of reply.match(/[^\n]*\n?/g).filter(Boolean)) {
+      await sleep(Math.max(40, delay / 3));
+      out({ type: "assistant", message: { usage: { input_tokens: 200, output_tokens: 30 }, content: [{ type: "text", text: piece }] } });
+    }
+    await sleep(delay);
+    out({ type: "result", subtype: "success", total_cost_usd: Number(scripted.costUsd ?? 0.0061), usage: { input_tokens: 1200, output_tokens: 160 },
+          result: reply, permission_denials: [], session_id: session });
+    process.exit(0);
+  }
+  const played = org.script({
+    provider: "claude", args, prompt: task, resumed: args.includes("--resume"),
+    onCall: (tool, input, result) => {
+      out({ type: "assistant", message: { usage: { input_tokens: 300, output_tokens: 30 }, content: [{ type: "tool_use", name: `mcp__org__${tool}`, input }] } });
+      out({ type: "user", message: { content: [{ type: "tool_result", content: result }] } });
+    },
+    onSay: (text) => out({ type: "assistant", message: { usage: { input_tokens: 200, output_tokens: 30 }, content: [{ type: "text", text: `${text}\n` }] } }),
+  });
+  for (let i = 1; i <= turns; i++) {
+    await sleep(delay);
+    out({ type: "assistant", message: { usage: { input_tokens: 1000, output_tokens: 50 }, content: [
+      { type: "text", text: `${played.line(i) ?? `Turn ${i}: working on "${task.slice(0, 40)}".`}\n` },
+      { type: "tool_use", name: "Read", input: { file_path: `/src/file${i}.ts` } },
+    ] } });
+    await played.atStep(i);
+  }
+  played.close();
+  if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
+  await sleep(delay);
+  const denials = process.env.STUB_DENY ? [{ tool_name: process.env.STUB_DENY }] : [];
+  out({ type: "result", subtype: "success", total_cost_usd: 0.0123, usage: { input_tokens: turns * 1000, output_tokens: turns * 50 },
+        result: played.done ?? `Done: ${task.slice(0, 60)}`, permission_denials: denials, session_id: session });
+  process.exit(Number(process.env.STUB_EXIT ?? 0));
+})();

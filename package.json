@@ -1,0 +1,94 @@
+{
+  "name": "ceo-tui",
+  "version": "0.4.0",
+  "description": "A team of AI agents that work with each other, on Claude, Codex and Gemini, from one terminal: hire, budget, delegate, audit, with a hash-chained ledger of every run, note and dollar.",
+  "keywords": [
+    "agents",
+    "claude-code",
+    "codex",
+    "gemini",
+    "antigravity",
+    "multi-agent",
+    "orchestration",
+    "collaboration",
+    "tui",
+    "terminal",
+    "tmux",
+    "ledger",
+    "budget",
+    "delegation",
+    "ink"
+  ],
+  "license": "MIT",
+  "author": "Sumer Vaid <sumer@stanford.edu> (https://github.com/sumervaid)",
+  "homepage": "https://github.com/sumervaid/ceo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sumervaid/ceo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sumervaid/ceo/issues"
+  },
+  "type": "module",
+  "bin": {
+    "ceo": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.spec.*",
+    "tools/stub-claude",
+    "tools/stub-codex",
+    "tools/stub-gemini",
+    "tools/stub-org.mjs",
+    "tools/stub-gh",
+    "commands",
+    "agents",
+    "hooks/*.sh",
+    "hooks/hooks.json",
+    "statusline",
+    ".claude-plugin",
+    ".mcp.json",
+    "install.sh",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test dist/**/*.spec.js",
+    "ui": "node dist/tui/index.js",
+    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test",
+    "prepack": "pnpm build",
+    "demo": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/hero.tape'",
+    "demo:company": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/company.tape'",
+    "demo:chat": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh chat && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/chat.tape'",
+    "demo:live": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh team && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/live.tape'",
+    "demo:suggest": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/suggest.tape'",
+    "demo:queue": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/queue.tape'",
+    "demo:setup": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/setup.tape'",
+    "demo:collab": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh org && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/collab.tape'",
+    "demo:all": "pnpm demo && pnpm demo:company && pnpm demo:chat && pnpm demo:live && pnpm demo:suggest && pnpm demo:queue && pnpm demo:setup && pnpm demo:collab && pnpm demo:docket && pnpm demo:integrations",
+    "demo:docket": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh team && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/docket.tape'",
+    "demo:integrations": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh team && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/integrations.tape'"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ink": "^5.0.1",
+    "react": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@10.33.1+sha512.05ba3c1d5d1c18f68df06470d74055e62d41fc110a0c660db1b2dfb2785327f04cf0f68345d4609bc52089e7fa0343c31593b2f9594e2c5d5da426230acc9820"
+}

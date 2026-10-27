@@ -1,0 +1,25 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "ceo",
+  "displayName": "CEO",
+  "version": "0.4.0",
+  "description": "Optional Claude Code companion to CEO, the terminal dashboard where a team of AI agents on Claude, Codex and Gemini work with each other: slash commands and MCP tools that write to the same ledger the dashboard reads.",
+  "author": {
+    "name": "Sumer Vaid",
+    "email": "sumer@stanford.edu",
+    "url": "https://github.com/sumervaid"
+  },
+  "homepage": "https://github.com/sumervaid/ceo#readme",
+  "repository": "https://github.com/sumervaid/ceo",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "delegation",
+    "ledger",
+    "audit",
+    "cost-tracking",
+    "git-worktree"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,49 @@
+name: release
+
+# Publishes to npm when a version tag is pushed. The tag must match the
+# version in package.json. The build, typecheck and specs run first through
+# prepublishOnly. The package carries a provenance statement from this run.
+# Needs an NPM_TOKEN automation-token secret on the repo, or npm trusted
+# publishing configured for this workflow.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The version comes from package.json's packageManager field.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Tag matches package.json
+        run: |
+          V=$(node -p "require('./package.json').version")
+          [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != v$V"; exit 1; }
+      - name: Already on npm
+        id: npm
+        run: |
+          V=$(node -p "require('./package.json').version")
+          if npm view "ceo-tui@$V" version >/dev/null 2>&1; then echo "published=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.npm.outputs.published != 'true'
+        run: pnpm publish --no-git-checks --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Release notes from the changelog
+        run: |
+          V=$(node -p "require('./package.json').version")
+          awk -v v="## $V " 'index($0, v) == 1 {on = 1; next} /^## / && on {exit} on' CHANGELOG.md > release-notes.md
+      - name: GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
