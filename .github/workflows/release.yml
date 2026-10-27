@@ -44,6 +44,6 @@ jobs:
           V=$(node -p "require('./package.json').version")
           awk -v v="## $V " 'index($0, v) == 1 {on = 1; next} /^## / && on {exit} on' CHANGELOG.md > release-notes.md
       - name: GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: release-notes.md
