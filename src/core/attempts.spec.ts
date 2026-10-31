@@ -32,6 +32,11 @@ process.env.STUB_DELAY_MS = "10";
 process.env.STUB_TURNS = "1";
 process.env.CEO_REQUIRE_STUBS = "1";
 process.env.CEO_NO_COLLAB = "1";
+// The winner's work is committed on its branch. CI machines have no git identity.
+process.env.GIT_AUTHOR_NAME = "test";
+process.env.GIT_AUTHOR_EMAIL = "test@example.com";
+process.env.GIT_COMMITTER_NAME = "test";
+process.env.GIT_COMMITTER_EMAIL = "test@example.com";
 
 /** A seeded random source, so the router's draws repeat. */
 function mulberry32(seed: number): () => number {
