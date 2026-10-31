@@ -89,6 +89,7 @@ See [swarms and limits](swarms.md).
 
 ```sh
 ceo sky                # the dashboard, opened on the constellation
+ceo sky --layout web   # opened on one layout: auto, orbit, providers, teams, web, spend or spiral
 ceo constellation      # the same
 ```
 
@@ -275,4 +276,5 @@ is refused rather than double-counted.
 | `CEO_SANDBOX` | Where runs execute: `local`, `docker` or `ssh`. Default `local`. See [sandboxes](sandboxes.md). |
 | `CEO_SANDBOX_IMAGE` | The image a docker sandbox starts. Default `ceo-agent:latest`. |
 | `CEO_DOCKER_BIN` | The `docker` binary, when not on PATH. Point at `tools/stub-docker` for $0 runs. |
+| `CEO_SKY_LAYOUT` | The layout the constellation opens on: `auto`, `orbit`, `providers`, `teams`, `web`, `spend` or `spiral`. Wins over the remembered choice. |
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | Read, never written. These variables decide what `setup` and `billing` report. |

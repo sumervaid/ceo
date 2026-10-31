@@ -36,7 +36,7 @@ dialog.
 | `P` | Push the selected agent's branch and open a pull request with the ledger's account. | `note` of kind `pr` |
 | `V` | Approvals: merges and outward actions waiting on a decision, with the evidence behind each. The status bar shows the count waiting. See [judges and gates](gates.md). | `approval_decide` |
 | `L` | The live view: a column per provider, a card per agent, and the exchanges between agents. `C` there opens the chat. `O` switches to the constellation. `esc` returns. | none |
-| `O` | The constellation: the chief of staff a black hole, every agent a star, every note a comet. `←` `→` select a star, `enter` opens the agent, `L` switches to the cards, `C` opens the chat, `esc` returns. See [the constellation](sky.md). | none |
+| `O` | The constellation: the chief of staff a black hole, every agent a star, every note a comet. `←` `→` select a star, `enter` opens the agent, `0` to `6` and `[` `]` choose a layout, `L` switches to the cards, `C` opens the chat, `esc` returns. See [the constellation](sky.md). | none |
 | `+` | Start a company: the picker of ready-made teams. `enter` hires one and opens the chat. On a directory with no org, `n` opens the same picker. | `hire` per seat, `note` |
 | `i` | Give the selected agent a git worktree and branch `ceo/<name>`. Needs a repository with a commit. | `worktree_provision` |
 | `m` | Merge the selected agent's branch into the base branch. Conflicts are listed, not resolved. | `worktree_merge` |

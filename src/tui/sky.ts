@@ -231,6 +231,13 @@ export type SkyScene = {
   centerLabel: string | null;
   /** True while the chief is replying: the horizon's ring brightens. */
   centerActive: boolean;
+  /** Faint marks a layout draws under the stars: rings, wedge edges, arm paths, labels. */
+  guides?: {
+    rings: Array<{ r: number; color: Rgb }>;
+    lines: Array<{ x1: number; y1: number; x2: number; y2: number; color: Rgb }>;
+    path: Array<{ x: number; y: number; color: Rgb }>;
+    labels: Array<{ x: number; y: number; text: string; color: Rgb }>;
+  };
 };
 
 export type Cell = {
@@ -375,6 +382,19 @@ export function drawSky(scene: SkyScene): Cell[][] {
     }
   }
 
+  // The layout's guides, faint and under everything that moves.
+  if (scene.guides) {
+    for (const ring of scene.guides.rings) {
+      const n = Math.ceil(ring.r * (g.ax + 1) * Math.PI * 2);
+      for (let i = 0; i < n; i += 2) {
+        const p = toCell(g, ring.r, (i / n) * Math.PI * 2);
+        grid.dot(Math.round(p.x * 2 + 1), Math.round(p.y * 4 + 2), ring.color, 0);
+      }
+    }
+    for (const l of scene.guides.lines) dottedLine(grid, l.x1, l.y1, l.x2, l.y2, l.color, 0, 3);
+    for (const p of scene.guides.path) grid.dot(Math.round(p.x * 2 + 1), Math.round(p.y * 4 + 2), p.color, 0);
+  }
+
   // Constellation lines between agents that have traded notes.
   for (const e of scene.edges) {
     dottedLine(grid, e.x1, e.y1, e.x2, e.y2, scale(e.color, 0.22 + 0.4 * Math.min(1, e.strength)), 2, e.strength > 0.7 ? 2 : 3);
@@ -457,6 +477,15 @@ export function drawSky(scene: SkyScene): Cell[][] {
     [...label].forEach((ch, i) => grid.put(at + i, y, ch, color, selected || s.status === "running", selected));
   }
 
+  // Guide labels last, only where nothing else is drawn.
+  for (const l of scene.guides?.labels ?? []) {
+    const x = Math.round(l.x - l.text.length / 2);
+    const y = Math.max(0, Math.min(H - 1, Math.round(l.y)));
+    const xi = Math.max(0, Math.min(W - l.text.length, x));
+    if (y < 0 || y >= H || !grid.free(xi, y, l.text.length)) continue;
+    [...l.text].forEach((ch, i) => grid.put(xi + i, y, ch, l.color));
+  }
+
   return grid.cells;
 }
 
@@ -518,11 +547,11 @@ export function rowToText(row: Cell[]): string {
 }
 
 /** Colour a short run of text the way the sky does, for the header and footer. */
-export function paint(text: string, color: Rgb | null, opts: { bold?: boolean; truecolor?: boolean } = {}): string {
+export function paint(text: string, color: Rgb | null, opts: { bold?: boolean; truecolor?: boolean; inverse?: boolean } = {}): string {
   if (!color) return text;
   const tc = opts.truecolor ?? true;
   const code = tc ? `\x1b[38;2;${color[0]};${color[1]};${color[2]}m` : `\x1b[38;5;${to256(color)}m`;
-  return `${opts.bold ? "\x1b[1m" : ""}${code}${text}\x1b[0m`;
+  return `${opts.bold ? "\x1b[1m" : ""}${opts.inverse ? "\x1b[7m" : ""}${code}${text}\x1b[0m`;
 }
 
 export const KIND_RGB = { ask: ASK_RGB, reply: REPLY_RGB };

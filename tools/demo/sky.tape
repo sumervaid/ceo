@@ -1,6 +1,7 @@
 # The constellation: the chief of staff is asked for a swarm, and twelve
 # agents on claude, codex and gemini are born at the horizon, spiral in to
-# work, and trade notes as comets around the chief.
+# work, and trade notes as comets around the chief. Then the sky steps
+# through its layouts: providers, teams, web, spend, spiral, and auto.
 #
 #   pnpm demo:sky
 
@@ -40,16 +41,16 @@ Sleep 5s
 Escape
 Sleep 300ms
 Type "O"
-Sleep 4s
-Right
-Sleep 1.4s
-Right
-Sleep 1.4s
-Right
-Sleep 1.4s
-Right
-Sleep 1.4s
-Escape
-Sleep 200ms
-Type "O"
-Sleep 4s
+Sleep 5s
+Type "2"
+Sleep 2.6s
+Type "3"
+Sleep 2.6s
+Type "4"
+Sleep 2.8s
+Type "5"
+Sleep 2.4s
+Type "6"
+Sleep 2.6s
+Type "0"
+Sleep 3s

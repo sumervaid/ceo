@@ -3,6 +3,13 @@
 ## 0.5.0 (2026-10-31)
 
 ### Added
+- **Constellation layouts.** Six arrangements of the sky: orbit, providers,
+  teams, web, spend and spiral. `auto` picks one from the shape of the org:
+  a swarm shows as teams, a busy exchange as a web, a large mixed team as
+  providers. `0` to `6` and `[` `]` choose in the sky. A switch eases every
+  star into place. Each layout draws faint guides: rings, wedge edges, arm
+  paths and labels. The choice is remembered in `~/.ceo/sky.json`.
+  `ceo sky --layout <name>` and `CEO_SKY_LAYOUT` open on one layout.
 - **Swarms.** Many copies of one agent, hired in one step and dealt
   round-robin across providers. The members are named `<name>-01`,
   `<name>-02` and so on. `ceo swarm <name> <n>` takes `--brief`,

@@ -178,7 +178,7 @@ exchange from the terminal. See [collaboration](docs/collaboration.md).
 ## The constellation
 
 <p align="center">
-  <img src="docs/sky.gif" alt="The constellation: a black hole with a swirling disk for the chief of staff; twelve agents on claude, codex and gemini born at the horizon, spiralling in to work and trading notes as comets" width="900">
+  <img src="docs/sky.gif" alt="The constellation: a black hole with a swirling disk for the chief of staff; twelve agents on claude, codex and gemini born at the horizon, spiralling in to work and trading notes as comets, then the sky steps through its layouts" width="900">
 </p>
 
 `O` on the dashboard, or `ceo sky`, draws the org as a sky. The chief of
@@ -195,6 +195,9 @@ colour of the agent's provider.
   who works with whom.
 - **A new agent is born at the horizon.** The agent drifts out to an orbit.
 - **A crowded sky drops names and keeps stars.** Hundreds of agents fit.
+- **Six layouts and auto.** Orbit, providers, teams, web, spend and spiral
+  each arrange the same stars. Auto picks one from the shape of the org. `0`
+  to `6` choose. A switch eases every star into place.
 
 `←` `→` select a star. `enter` opens the agent. `L` switches to the cards.
 `C` opens the chat. See [the constellation](docs/sky.md).

@@ -59,6 +59,7 @@ import { describeSpread, hireSwarm } from "./core/swarm.js";
 import { parseVerifier } from "./core/verify.js";
 import { providerFor } from "./core/providers.js";
 import { runCmd } from "./cli/run.js";
+import { LAYOUTS } from "./tui/layouts.js";
 import { syncReflexSkills } from "./core/loop.js";
 import { isSandboxKind } from "./core/sandbox.js";
 import type { Arm, VerifierSpec } from "./core/types.js";
@@ -932,6 +933,18 @@ async function main(): Promise<void> {
     case "sky":
     case "constellation":
       ensureCurrentWorkspace(cwd);
+      {
+        const at = rest.indexOf("--layout");
+        const want = at >= 0 ? rest[at + 1] : undefined;
+        if (want) {
+          if (want !== "auto" && !LAYOUTS.some((l) => l.id === want)) {
+            process.stderr.write(`--layout takes auto, ${LAYOUTS.map((l) => l.id).join(", ")}.\n`);
+            process.exitCode = 1;
+            return;
+          }
+          process.env.CEO_SKY_LAYOUT = want;
+        }
+      }
       runUi(cwd, "sky");
       return;
 
@@ -1136,7 +1149,7 @@ async function main(): Promise<void> {
           "  ceo                    attach to the dashboard in tmux session `ceo`, or run it here",
           "  ceo ui                 run the dashboard in this terminal without tmux",
           "  ceo chat               talk to the chief of staff, who hires and gives out work",
-          "  ceo sky                the constellation: every agent as a star around the chief of staff, notes in flight",
+          "  ceo sky [--layout l]   the constellation: every agent as a star around the chief of staff; layouts auto, orbit, providers, teams, web, spend, spiral",
           "  ceo company [id]       hire a whole company in one step; no id lists them; --worktrees writers|all|none, --size n",
           "  ceo swarm <name> <n>   hire n copies of one agent across providers; --brief, --providers, --budget, --level, --task",
           "  ceo run <task>         run a task now as attempts, verify each, keep the winner; --samples n",

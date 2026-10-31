@@ -27,7 +27,6 @@ import {
   ease,
   geometry,
   KIND_RGB,
-  orbitTargets,
   paint,
   PROVIDER_RGB,
   rowToAnsi,
@@ -41,6 +40,7 @@ import {
   type StarStatus,
 } from "../sky.js";
 import { exchanges, type Exchange } from "./LiveBoard.js";
+import { autoLayout, cycleLayout, groupOf, layout, LAYOUTS, readSkyLayout, writeSkyLayout, type LayoutAgent, type LayoutChoice, type LayoutEdge, type LayoutId } from "../layouts.js";
 
 export type SkyProps = {
   workspaceName: string;
@@ -52,6 +52,8 @@ export type SkyProps = {
   width: number;
   height: number;
   onOpen: (agent: string) => void;
+  /** Start on this layout instead of the remembered one. */
+  layout?: LayoutChoice;
 };
 
 const FRAME_MS = 70;
@@ -102,7 +104,7 @@ function withAttemptStars(agents: AgentRecord[], runs: RunState[], now: number):
 export function Sky(props: SkyProps) {
   const { width: W, height: H } = props;
   const { agents, runs } = withAttemptStars(props.agents, props.runs, Date.now());
-  const canvasH = Math.max(8, H - 3);
+  const canvasH = Math.max(8, H - 4);
   const truecolor = useMemo(() => truecolorSupported(), []);
 
   // The clock. Only this view animates, and only while it is open.
@@ -117,6 +119,11 @@ export function Sky(props: SkyProps) {
   const positions = useRef(new Map<string, { r: number; a: number }>());
   const seen = useRef<Map<string, number> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+
+  // The layout: chosen by hand, or picked by auto from the shape of the org.
+  const [choice, setChoice] = useState<LayoutChoice>(() => props.layout ?? readSkyLayout());
+  const autoPick = useRef<{ id: LayoutId; candidate: LayoutId; since: number }>({ id: "orbit", candidate: "orbit", since: 0 });
+  const switched = useRef<{ id: LayoutId; at: number }>({ id: "orbit", at: 0 });
 
   const latest = new Map<string, RunState>();
   for (const r of runs) latest.set(r.agent, r);
@@ -133,11 +140,48 @@ export function Sky(props: SkyProps) {
   swirl.current += (dt / 1000) * Math.min(2.4, 0.45 + 0.22 * running + (chiefActive ? 0.6 : 0));
 
   const g = geometry(W, canvasH);
-  const orbitAgents = crew.map((a) => {
+  // Who has traded notes, read before anyone moves: the web layout needs it.
+  const all = exchanges(props.messages, props.tasks);
+  const pairCount = new Map<string, LayoutEdge>();
+  const chiefLinks = new Map<string, number>();
+  for (const e of all) {
+    if (e.from === "you" || e.to === "you" || e.to === "everyone") continue;
+    if (chief && (e.from === chief.name || e.to === chief.name)) {
+      const other = e.from === chief.name ? e.to : e.from;
+      chiefLinks.set(other, (chiefLinks.get(other) ?? 0) + 1);
+      continue;
+    }
+    const [p, q] = [e.from, e.to].sort();
+    const edge = pairCount.get(`${p}\u0000${q}`) ?? { a: p, b: q, weight: 0 };
+    edge.weight++;
+    pairCount.set(`${p}\u0000${q}`, edge);
+  }
+  const layoutAgents: LayoutAgent[] = crew.map((a, i) => {
     const run = latest.get(a.name);
-    return { name: a.name, status: statusOf(run, now), since: run?.startedAt ?? 0 };
+    const provider = run?.status === "running" && run.provider ? run.provider : a.provider;
+    return { name: a.name, status: statusOf(run, now), provider, since: run?.startedAt ?? 0, seq: i, spendUsd: a.spentUsd + (run?.status === "running" ? run.costUsd : 0), group: groupOf(a.name) };
   });
-  const { targets, labelled } = orbitTargets(g, orbitAgents, now);
+
+  // Auto changes its mind only after the new pick has held for a few seconds.
+  const recent = all.filter((e) => now - e.ts < 60_000).length;
+  const candidate = autoLayout(layoutAgents, recent);
+  const ap = autoPick.current;
+  if (ap.since === 0) {
+    // The first frame starts on the pick.
+    ap.id = candidate;
+    ap.candidate = candidate;
+    ap.since = now;
+  } else if (candidate !== ap.candidate) {
+    ap.candidate = candidate;
+    ap.since = now;
+  } else if (candidate !== ap.id && now - ap.since > 2500) {
+    ap.id = candidate;
+  }
+  const active: LayoutId = choice === "auto" ? ap.id : choice;
+  if (active !== switched.current.id) switched.current = { id: active, at: now };
+
+  const arranged = layout(active, { g, agents: layoutAgents, edges: [...pairCount.values()], chiefLinks, t: now, current: positions.current });
+  const { targets, labelled } = arranged;
   const k = 1 - Math.exp(-dt / 380);
   const pos = positions.current;
   for (const a of crew) {
@@ -161,7 +205,6 @@ export function Sky(props: SkyProps) {
 
   // Exchanges become lines, comets and ripples. The first time the view
   // sees the board, everything on it is history: lines, not comets.
-  const all = exchanges(props.messages, props.tasks);
   if (seen.current === null) {
     seen.current = new Map(all.map((e) => [exchangeKey(e), 0]));
   }
@@ -220,7 +263,16 @@ export function Sky(props: SkyProps) {
   const order = [...stars].sort((s1, s2) => Math.atan2(s1.y - g.cy, (s1.x - g.cx) / g.ax) - Math.atan2(s2.y - g.cy, (s2.x - g.cx) / g.ax));
   const names = order.map((s) => s.name);
   const current = selected && names.includes(selected) ? selected : null;
+  const choose = (next: LayoutChoice) => {
+    setChoice(next);
+    writeSkyLayout(next);
+  };
   useInput((input, key) => {
+    if (input === "]") return choose(cycleLayout(choice, 1));
+    if (input === "[") return choose(cycleLayout(choice, -1));
+    if (input === "0") return choose("auto");
+    const preset = LAYOUTS.find((l) => l.key === input);
+    if (preset) return choose(preset.id);
     if (names.length === 0) return;
     const i = current ? names.indexOf(current) : -1;
     if (key.rightArrow || key.downArrow || input === "\t" || input === "l" || input === "j") {
@@ -245,7 +297,24 @@ export function Sky(props: SkyProps) {
     selected: current,
     centerLabel: chief?.name ?? null,
     centerActive: Boolean(chiefActive),
+    guides: arranged.guides,
   });
+
+  // The layout bar: auto first, then the six presets, the active one lit.
+  const chips: string[] = [];
+  const autoLabel = choice === "auto" ? ` auto · ${active} ` : " auto ";
+  chips.push(paint(` 0${autoLabel}`, choice === "auto" ? ACCENT : DIM, { bold: choice === "auto", inverse: choice === "auto", truecolor }));
+  let barPlain = ` 0${autoLabel}`;
+  for (const l of LAYOUTS) {
+    const on = l.id === active;
+    const lit = on && choice !== "auto";
+    const text = ` ${l.key} ${l.glyph} ${l.name} `;
+    barPlain += ` ${text}`;
+    chips.push(" " + paint(text, lit ? ACCENT : on ? ACCENT : DIM, { bold: on, inverse: lit, truecolor }));
+  }
+  const hint = "[ ] cycles";
+  const barGap = W - barPlain.length - hint.length - 2;
+  const bar = ` ${chips.join("")}${barGap > 0 ? " ".repeat(barGap) + paint(hint, DIM, { truecolor }) : ""}`;
 
   // The header: what is out there, and which providers are waiting out a limit.
   const counts = PROVIDERS.map((p) => ({ p, n: crew.filter((a) => a.provider === p).length })).filter((c) => c.n > 0);
@@ -268,7 +337,10 @@ export function Sky(props: SkyProps) {
 
   // The info line: the selected star, or the latest exchange.
   let info = "";
-  if (current) {
+  const meta = LAYOUTS.find((l) => l.id === active)!;
+  if (now - switched.current.at < 3200 && switched.current.at > 0 && !current) {
+    info = paint(` ${meta.glyph} ${meta.name}`, ACCENT, { bold: true, truecolor }) + paint(`  ${meta.about}${choice === "auto" ? "  Auto chose this for the org right now." : ""}`, DIM, { truecolor });
+  } else if (current) {
     const a = agents.find((x) => x.name === current);
     const run = latest.get(current);
     const status = statusOf(run, now);
@@ -303,6 +375,8 @@ export function Sky(props: SkyProps) {
         paint(" a star  ", DIM, { truecolor }),
         paint("enter", ACCENT, { truecolor }),
         paint(" opens it  ", DIM, { truecolor }),
+        paint("[ ] 0-6", ACCENT, { truecolor }),
+        paint(" layout  ", DIM, { truecolor }),
         paint("L", ACCENT, { truecolor }),
         paint(" cards  ", DIM, { truecolor }),
         paint("C", ACCENT, { truecolor }),
@@ -315,6 +389,7 @@ export function Sky(props: SkyProps) {
   return (
     <Box flexDirection="column" width={W}>
       <Text wrap="truncate">{header}</Text>
+      <Text wrap="truncate">{bar}</Text>
       {cells.map((row, i) => (
         <Text key={i} wrap="truncate">
           {rowToAnsi(row, truecolor)}
