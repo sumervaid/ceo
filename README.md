@@ -14,14 +14,17 @@
 </p>
 
 CEO is a terminal dashboard for a company of AI agents on Claude, Codex
-and Gemini. A single keystroke hires a whole team. A sentence to the chief
-of staff turns into staffed work. The agents then work the task together
+and Gemini. No API key is needed. Agents run on the Claude, ChatGPT and
+Google plans already signed in on the machine. A single keystroke hires a
+whole team. A sentence to the chief of staff turns into staffed work. The agents then work the task together
 across the provider line, and the live view shows every note, review and
 handoff the moment the exchange happens. A hash-chained ledger records
 each hire, run, note and dollar with the model and the permissions behind
 each event. In a simulated [experiment](#experiments), a team of eight
 solved 74% of tasks against 69% for eight agents working alone.
 
+- **[No API keys.](#install)** Agents bill the subscriptions the CLIs are
+  signed in with. A metered key shows as a warning on the hire form.
 - **[A company in one keystroke.](#a-company-in-ten-seconds)** Six
   ready-made teams, each mixing providers, with a git worktree per agent
   on request.
@@ -66,9 +69,10 @@ cd <any directory> && ceo  # the dashboard
 
 From source: `git clone https://github.com/sumervaid/ceo && cd ceo && pnpm install && pnpm build && ./install.sh`.
 
-CEO stores no model-provider credential. CEO runs the CLIs already
-signed in on the machine. `ceo setup` names the account each CLI bills. A single ready
-provider is enough to start. See [setup and accounts](docs/setup.md).
+CEO needs no API key. CEO stores no model-provider credential. CEO runs
+the CLIs already signed in on the machine. `ceo setup` names the account
+each CLI bills. A single ready provider is enough to start. See
+[setup and accounts](docs/setup.md).
 
 ## A company in ten seconds
 

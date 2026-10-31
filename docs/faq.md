@@ -18,6 +18,10 @@ headless mode, the streaming JSON and the read-only mode CEO needs.
 needed for one feature only: `isolated` agents. Those agents' worktrees and
 branches are git objects.
 
+**Does CEO need an API key?** No. CEO calls no model API. Each agent runs
+the claude, codex or gemini CLI already signed in. A Claude subscription,
+a ChatGPT plan or a Google account is enough.
+
 **Which account does a run bill?** The account each CLI is signed in as. CEO
 stores no model-provider credential. `ceo billing` prints the account of
 every provider. A metered API key is a yellow warning on the checklist and
