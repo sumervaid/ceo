@@ -28,6 +28,9 @@
  *   letting it scroll past as ordinary output.
  */
 
+import "../core/evidence.js";
+import { runTask, type TaskRun } from "../core/attempts.js";
+import { armLabel } from "../core/types.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { runDelegation, type RunEvent, type RunHandle, type RunResult } from "../core/runner.js";
@@ -45,7 +48,8 @@ export type RunLineKind = "text" | "tool" | "denied";
 /** One thing the agent did, in the order it did it. */
 export type RunLine = { kind: RunLineKind; text: string };
 
-export type RunStatus = "running" | "done" | "failed" | "cancelled";
+/** `waiting`: a provider limit refused the run, and the task is back in the queue until `retryAt`. */
+export type RunStatus = "running" | "done" | "failed" | "cancelled" | "waiting";
 
 /** Map key for a run: one run per agent per workspace. */
 export function runKey(workspace: string, agent: string): string {
@@ -85,6 +89,12 @@ export type RunState = {
   cancelRequested: boolean;
   /** Turns so far: one, plus one per delivery of teammates' notes. */
   turns: number;
+  /** When a waiting run's provider is expected back. */
+  retryAt: number | null;
+  /** Set when the run is one attempt of a sampled task. */
+  attemptId: string | null;
+  /** The attempt's arm, as a label: "codex gpt-5". */
+  arm: string | null;
 };
 
 /** Whether a start or cancel was accepted, and what to put on the flash line. */
@@ -132,6 +142,9 @@ function blank(
     error: null,
     cancelRequested: false,
     turns: 1,
+    retryAt: null,
+    attemptId: null,
+    arm: null,
   };
 }
 
@@ -190,7 +203,8 @@ export function reduceRun(run: RunState, e: RunEvent): RunState {
     case "failed":
       return {
         ...run,
-        status: run.cancelRequested ? "cancelled" : "failed",
+        status: run.cancelRequested ? "cancelled" : e.retryAt ? "waiting" : "failed",
+        retryAt: e.retryAt ?? null,
         error: e.error,
         finishedAt: Date.now(),
         durationMs: run.durationMs || Date.now() - run.startedAt,
@@ -208,6 +222,11 @@ export type Runs = {
   cancel: (workspace: string, agent: string) => RunOutcome;
   /** Drop a settled run from the pane. Refuses while it is still running. */
   dismiss: (workspace: string, agent: string) => void;
+  /**
+   * Run a task as attempts, one run per arm, verified when every attempt
+   * ends. Each attempt shows as its own run, keyed by agent and attempt.
+   */
+  startTask: (workspace: string, taskId: string, onDone?: (status: string, note: string) => void) => RunOutcome;
 };
 
 /**
@@ -305,7 +324,8 @@ export function useRuns(onSettled: (workspace: string) => void, onFinished?: (ru
           // Reporting zero for it would understate what was spent.
           update(key, (run) => ({
             ...run,
-            status: run.cancelRequested ? "cancelled" : result.ok ? "done" : "failed",
+            status: run.cancelRequested ? "cancelled" : result.ok ? "done" : result.rateLimit ? "waiting" : "failed",
+            retryAt: result.rateLimit?.retryAt ?? null,
             costUsd: result.costUsd,
             costIsEstimate: result.costIsEstimate,
             inputTokens: result.inputTokens,
@@ -364,5 +384,64 @@ export function useRuns(onSettled: (workspace: string) => void, onFinished?: (ru
     });
   }, []);
 
-  return { runs, start, cancel, dismiss };
+  const taskRuns = useRef<Map<string, TaskRun>>(new Map());
+
+  const startTask = useCallback(
+    (workspace: string, taskId: string, onDone?: (status: string, note: string) => void): RunOutcome => {
+      const tkey = `${workspace}\u0000${taskId}`;
+      if (taskRuns.current.has(tkey)) return { ok: false, message: `Task ${taskId} is already running.` };
+      const keyOf = (agent: string, attemptId: string) => runKey(workspace, `${agent}#${attemptId}`);
+      const agentOf = new Map<string, string>();
+      const run = runTask(taskId, {
+        cwd: workspace,
+        onStart: (a) => {
+          agentOf.set(a.id, a.agent);
+          const key = keyOf(a.agent, a.id);
+          setRuns((prev) => {
+            const next = new Map(prev);
+            next.set(key, { ...blank(workspace, a.agent, "", taskId, Date.now()), attemptId: a.id, arm: armLabel(a.arm) });
+            return next;
+          });
+        },
+        onEvent: (id, e) => {
+          const agent = agentOf.get(id);
+          if (agent) update(keyOf(agent, id), (r) => reduceRun(r, e));
+        },
+        onEnd: (id, result) => {
+          const agent = agentOf.get(id);
+          if (!agent) return;
+          update(keyOf(agent, id), (r) => ({
+            ...r,
+            status: r.cancelRequested ? "cancelled" : result.ok ? "done" : result.rateLimit ? "waiting" : "failed",
+            retryAt: result.rateLimit?.retryAt ?? null,
+            costUsd: result.costUsd,
+            costIsEstimate: result.costIsEstimate,
+            inputTokens: result.inputTokens,
+            outputTokens: result.outputTokens,
+            durationMs: result.durationMs,
+            error: result.ok ? null : result.error,
+            finishedAt: Date.now(),
+          }));
+        },
+      });
+      if (run.attempts.length === 0) {
+        void run.finished.then((out) => onDone?.(out.status, out.note));
+        settled.current(workspace);
+        return { ok: false, message: "No attempt could start. The task says why." };
+      }
+      taskRuns.current.set(tkey, run);
+      for (const a of run.attempts) handles.current.set(keyOf(agentOf.get(a.id) ?? "", a.id), a.handle);
+      void run.finished
+        .then((out) => onDone?.(out.status, out.note))
+        .finally(() => {
+          taskRuns.current.delete(tkey);
+          for (const a of run.attempts) handles.current.delete(keyOf(agentOf.get(a.id) ?? "", a.id));
+          settled.current(workspace);
+        });
+      return { ok: true, message: `${run.attempts.length} attempt${run.attempts.length === 1 ? "" : "s"} started.` };
+    },
+    [update],
+  );
+
+  return { runs, start, cancel, dismiss, startTask };
 }

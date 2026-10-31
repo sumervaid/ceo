@@ -1,0 +1,75 @@
+#!/usr/bin/env node
+// Stub `docker` for $0 testing. Understands `version`, `image inspect <image>`, `rm -f <name>` and `run [flags] <image> <cmd> <args...>`.
+// `run` parses the flags a real docker would get, refuses a call without `--rm` or a `-v <host>:/work` mount, then runs the inner command on this machine.
+// The inner command runs with cwd set to the host path of the /work mount and with stdio inherited. -e flags add to the inherited environment.
+// The inner names claude, codex and agy map to CEO_CLAUDE_BIN, CEO_CODEX_BIN and CEO_GEMINI_BIN when those variables name a stub.
+// Env: STUB_DOCKER_LOG appends one JSON line per invocation. STUB_DOCKER_DOWN=1 makes `version` fail. STUB_DOCKER_NO_IMAGE=1 makes `image inspect` fail.
+(async () => {
+  const { appendFileSync } = await import("node:fs");
+  const { spawn } = await import("node:child_process");
+  const argv = process.argv.slice(2);
+  const log = (record) => {
+    if (process.env.STUB_DOCKER_LOG) appendFileSync(process.env.STUB_DOCKER_LOG, JSON.stringify({ argv, ...record }) + "\n");
+  };
+  const fail = (msg, code = 125) => { process.stderr.write(`stub-docker: ${msg}\n`); process.exit(code); };
+
+  const [cmd, ...rest] = argv;
+  if (cmd === "version") {
+    log({ cmd });
+    if (process.env.STUB_DOCKER_DOWN) fail("Cannot connect to the Docker daemon.", 1);
+    process.stdout.write("Client: stub-docker 0.0.0\n");
+    process.exit(0);
+  }
+  if (cmd === "image" && rest[0] === "inspect") {
+    log({ cmd: "image inspect", image: rest[1] });
+    if (process.env.STUB_DOCKER_NO_IMAGE) fail(`No such image: ${rest[1]}`, 1);
+    process.stdout.write("[]\n");
+    process.exit(0);
+  }
+  if (cmd === "rm") {
+    const force = rest.includes("-f");
+    log({ cmd: "rm", force, name: rest.filter((a) => !a.startsWith("-"))[0] });
+    process.exit(0);
+  }
+  if (cmd !== "run") fail(`unsupported command ${cmd}`);
+
+  const valued = new Set(["--name", "--network", "-v", "--volume", "-w", "--workdir", "-e", "--env", "--user", "-u", "--entrypoint"]);
+  const flags = { rm: false, interactive: false, name: null, network: null, mounts: [], env: [], workdir: null };
+  let i = 0;
+  for (; i < rest.length; i++) {
+    const a = rest[i];
+    if (!a.startsWith("-")) break;
+    if (a === "--rm") flags.rm = true;
+    else if (a === "-i" || a === "--interactive") flags.interactive = true;
+    else if (valued.has(a)) {
+      const v = rest[++i];
+      if (v === undefined) fail(`flag ${a} needs a value`);
+      if (a === "--name") flags.name = v;
+      else if (a === "--network") flags.network = v;
+      else if (a === "-v" || a === "--volume") flags.mounts.push(v);
+      else if (a === "-w" || a === "--workdir") flags.workdir = v;
+      else if (a === "-e" || a === "--env") flags.env.push(v);
+    } else fail(`unsupported flag ${a}`);
+  }
+  const image = rest[i];
+  const inner = rest.slice(i + 1);
+  log({ cmd: "run", ...flags, image, command: inner });
+  if (!flags.rm) fail("run without --rm would leave the container behind");
+  const work = flags.mounts.map((m) => m.split(":")).find((p) => p[1] === "/work");
+  if (!work) fail("run without a -v <host>:/work mount");
+  if (!image || inner.length === 0) fail("run needs an image and a command");
+
+  const mapped = { claude: "CEO_CLAUDE_BIN", codex: "CEO_CODEX_BIN", agy: "CEO_GEMINI_BIN" };
+  const override = mapped[inner[0]] && process.env[mapped[inner[0]]];
+  const bin = override && /stub-/.test(override) ? override : inner[0];
+
+  const env = { ...process.env };
+  for (const e of flags.env) {
+    const eq = e.indexOf("=");
+    if (eq > 0) env[e.slice(0, eq)] = e.slice(eq + 1);
+  }
+  const child = spawn(bin, inner.slice(1), { cwd: work[0], env, stdio: "inherit" });
+  child.on("error", (e) => fail(`could not run ${bin}: ${e.message}`, 127));
+  for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => child.kill(sig));
+  child.on("close", (code, signal) => process.exit(code ?? (signal ? 143 : 1)));
+})();

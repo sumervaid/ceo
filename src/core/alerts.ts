@@ -1,9 +1,10 @@
 /**
  * Alerts: telling the developer when the org needs a look.
  *
- * Six events can alert: a run finished, a run failed, a run was refused at
- * its budget, an agent reached past its level, the chief of staff replied
- * while the chat was closed, and the queue ran dry. Four channels carry
+ * Seven events can alert: a run finished, a run failed, a run was refused
+ * at its budget, an agent reached past its level, the chief of staff
+ * replied while the chat was closed, the queue ran dry, and a provider hit
+ * a rate or usage limit. Four channels carry
  * them: the terminal bell, a desktop notification, a Slack incoming
  * webhook, and any webhook that takes JSON.
  *
@@ -24,9 +25,9 @@ import * as path from "node:path";
 
 import { ceoHome } from "./workspaces.js";
 
-export type AlertKind = "done" | "failed" | "budget" | "denied" | "chief" | "queue";
+export type AlertKind = "done" | "failed" | "budget" | "denied" | "chief" | "queue" | "limit";
 
-export const ALERT_KINDS: AlertKind[] = ["done", "failed", "budget", "denied", "chief", "queue"];
+export const ALERT_KINDS: AlertKind[] = ["done", "failed", "budget", "denied", "chief", "queue", "limit"];
 
 export const ALERT_LABEL: Record<AlertKind, string> = {
   done: "a run finished",
@@ -35,6 +36,7 @@ export const ALERT_LABEL: Record<AlertKind, string> = {
   denied: "an agent reached past its level",
   chief: "the chief of staff replied",
   queue: "the queue ran dry",
+  limit: "a provider hit a rate or usage limit",
 };
 
 export type AlertConfig = {
@@ -52,7 +54,7 @@ export const DEFAULT_ALERTS: AlertConfig = {
   desktop: true,
   slack: null,
   webhook: null,
-  events: { done: false, failed: true, budget: true, denied: true, chief: true, queue: true },
+  events: { done: false, failed: true, budget: true, denied: true, chief: true, queue: true, limit: true },
 };
 
 export type Alert = {

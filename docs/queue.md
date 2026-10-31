@@ -11,9 +11,11 @@ failed. A task is a ledger object, not a file: `task_add` creates the task.
 ## States
 
 A queued task becomes running on `enter`, `R` or `A`. A running task becomes
-done, failed or cancelled. `u` requeues a settled task.
+done, failed or cancelled. A task with checks passes through `verifying`
+first. `u` requeues a settled task.
 
-Stored status is one of `queued`, `running`, `done`, `failed`, `cancelled`.
+Stored status is one of `queued`, `running`, `verifying`, `done`, `failed`,
+`cancelled`.
 **`blocked` is derived, never stored.** A task shows as blocked when the task
 is unassigned, when the assignee is not in the org, or when the assignee is
 at the budget cap. Raising the budget, hiring the agent or assigning the task
@@ -28,6 +30,34 @@ with that delegation's id. When the run settles, the task moves to `done`,
 whenever the queue is drawn. The cost is never copied onto the task. The
 queue and the ledger therefore cannot disagree about what a piece of work
 cost.
+
+## Checks and attempts
+
+A task can carry checks and a count of attempts. A task with a check, or
+with more than one attempt, runs as attempts. Every other task runs once.
+
+Each attempt is the assignee on one arm, in a separate git worktree on
+branch `ceo/<agent>--<attempt>`. The router picks the arms unless the task
+names the arms. The attempts start together. A directory with no git commit runs
+one attempt in the shared tree.
+
+When every attempt has ended, the task is `verifying`. Each finished attempt
+runs every check. The passing attempt with the best score is promoted. The
+cheaper attempt wins a tie. The task becomes done, with a note that names the
+winning arm. One dissent is kept: the best attempt from another arm. The
+worktrees of the other attempts are removed. Their branches stay.
+
+A task with checks is done only on a pass. A check that could not run is
+never a pass. When no attempt passes, the task fails. The note holds the
+score of every attempt. The note also says when a check could not run. When every
+attempt hit a provider limit, the task goes back to the queue. A task with
+several attempts and no check passes on any finished run.
+
+The ledger holds the whole decision as `attempt_start`, `attempt_end`,
+`verify` and `promote` events. Nobody settles a task with checks by hand.
+`ceo task <id> done` refuses one and names `ceo run` instead. An outcome budget can refuse the attempts. The task then fails
+with a sentence that names the numbers. See [verification](verification.md),
+[the router](router.md) and [outcomes](outcomes.md).
 
 ## Priority
 
@@ -51,6 +81,8 @@ can spend is the sum of the caps.
 ```sh
 ceo task add coder ! add the changelog     # high priority, assigned to coder
 ceo task add - write the release notes     # unassigned: blocked until assigned
+ceo task add coder fix the flaky retry test --verify "npm test" --samples 3
+ceo run 82b413                             # run now as attempts, verify, promote
 ceo task ls
 ceo task 82b413 assign reader
 ceo task 82b413 done | cancel | queue

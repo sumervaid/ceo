@@ -25,7 +25,7 @@ function main(): void {
 
   installSmoothFrames(process.stdout);
   // `ceo chat` opens straight onto the conversation with the chief of staff.
-  const app = render(<App initialView={process.env.CEO_VIEW === "chat" ? "chat" : undefined} />);
+  const app = render(<App initialView={process.env.CEO_VIEW === "chat" || process.env.CEO_VIEW === "sky" ? process.env.CEO_VIEW : undefined} />);
   app.waitUntilExit().catch((err: unknown) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;

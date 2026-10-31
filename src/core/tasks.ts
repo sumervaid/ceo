@@ -32,9 +32,11 @@
 import { randomBytes } from "node:crypto";
 import { append, readLedger } from "./ledger.js";
 import { readRoster } from "./roster.js";
-import { PROVIDERS, type LedgerEntry, type Provider } from "./types.js";
+import { isSandboxKind, type SandboxKind } from "./sandbox.js";
+import { PROVIDERS, type Arm, type LedgerEntry, type Provider, type VerifierSpec } from "./types.js";
 
-export type TaskStoredStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+/** `verifying`: every attempt has ended and the verifiers are deciding. */
+export type TaskStoredStatus = "queued" | "running" | "verifying" | "done" | "failed" | "cancelled";
 
 /** Stored status, plus the derived `blocked`. */
 export type TaskStatus = TaskStoredStatus | "blocked";
@@ -74,6 +76,19 @@ export type Task = {
    * runs the task on the assignee's provider.
    */
   provider: Provider | null;
+  /**
+   * The checks that decide the task. A task with verifiers reaches done only
+   * when an attempt passes them. A task without any is done when its run is.
+   */
+  verifiers: VerifierSpec[];
+  /** How many attempts the dispatcher runs, each on its own arm and worktree. Default 1. */
+  samples: number;
+  /** Arms to try, when the operator named them. Empty lets the router choose. */
+  arms: Arm[];
+  /** What kind of work this is, for the router: review, ci, debug, feature, edit, research or explore. */
+  kind: string | null;
+  /** Where the task's runs execute: a container or a remote host. Null runs them on this machine. */
+  sandbox: SandboxKind | null;
   /** Seq of the task_add entry, for cross-referencing. */
   seq: number;
 };
@@ -114,6 +129,11 @@ export function replayTaskEvents(entries: LedgerEntry[]): Map<string, StoredTask
         requestedBy: typeof e.data.requestedBy === "string" ? e.data.requestedBy : null,
         autoStart: e.data.autoStart === true,
         provider: PROVIDERS.includes(e.data.provider as Provider) ? (e.data.provider as Provider) : null,
+        verifiers: Array.isArray(e.data.verifiers) ? (e.data.verifiers as VerifierSpec[]) : [],
+        samples: Math.max(1, Math.floor(Number(e.data.samples ?? 1)) || 1),
+        arms: Array.isArray(e.data.arms) ? (e.data.arms as Arm[]) : [],
+        kind: typeof e.data.kind === "string" ? e.data.kind : null,
+        sandbox: isSandboxKind(e.data.sandbox) && e.data.sandbox !== "local" ? e.data.sandbox : null,
         seq: e.seq,
       });
     } else if (e.type === "task_update") {
@@ -130,6 +150,10 @@ export function replayTaskEvents(entries: LedgerEntry[]): Map<string, StoredTask
       }
       if (typeof e.data.delegationId === "string") t.delegationId = e.data.delegationId;
       if ("note" in e.data) t.note = typeof e.data.note === "string" ? e.data.note : null;
+      if (Array.isArray(e.data.verifiers)) t.verifiers = e.data.verifiers as VerifierSpec[];
+      if (e.data.samples !== undefined) t.samples = Math.max(1, Math.floor(Number(e.data.samples)) || 1);
+      if (Array.isArray(e.data.arms)) t.arms = e.data.arms as Arm[];
+      if (typeof e.data.kind === "string") t.kind = e.data.kind;
       t.updatedAt = e.ts;
     }
   }
@@ -188,7 +212,7 @@ export function listTasks(cwd?: string): Task[] {
   }
 
   const rank = (s: TaskStatus) =>
-    s === "running" ? 0 : s === "queued" ? 1 : s === "blocked" ? 2 : 3;
+    s === "running" || s === "verifying" ? 0 : s === "queued" ? 1 : s === "blocked" ? 2 : 3;
   out.sort((a, b) => {
     const r = rank(a.status) - rank(b.status);
     if (r !== 0) return r;
@@ -212,7 +236,19 @@ export function taskForDelegation(delegationId: string, cwd?: string): Task | nu
 }
 
 export function addTask(
-  input: { title: string; assignee?: string | null; priority?: TaskPriority; requestedBy?: string | null; autoStart?: boolean; provider?: Provider | null },
+  input: {
+    title: string;
+    assignee?: string | null;
+    priority?: TaskPriority;
+    requestedBy?: string | null;
+    autoStart?: boolean;
+    provider?: Provider | null;
+    verifiers?: VerifierSpec[];
+    samples?: number;
+    arms?: Arm[];
+    kind?: string | null;
+    sandbox?: SandboxKind | null;
+  },
   cwd?: string,
 ): Task {
   const title = input.title.replace(/\s+/g, " ").trim();
@@ -233,6 +269,11 @@ export function addTask(
       requestedBy: input.requestedBy ?? null,
       ...(input.autoStart ? { autoStart: true } : {}),
       ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.verifiers && input.verifiers.length > 0 ? { verifiers: input.verifiers } : {}),
+      ...(input.samples && input.samples > 1 ? { samples: Math.floor(input.samples) } : {}),
+      ...(input.arms && input.arms.length > 0 ? { arms: input.arms } : {}),
+      ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.sandbox && input.sandbox !== "local" ? { sandbox: input.sandbox } : {}),
     },
     cwd,
   );
@@ -242,7 +283,8 @@ export function addTask(
 /** Transitions that make sense. Anything else is refused with the reason. */
 const ALLOWED: Record<TaskStoredStatus, TaskStoredStatus[]> = {
   queued: ["running", "cancelled", "done"],
-  running: ["done", "failed", "cancelled", "queued"],
+  running: ["done", "failed", "cancelled", "queued", "verifying"],
+  verifying: ["done", "failed", "queued", "cancelled"],
   done: ["queued"],
   failed: ["queued", "cancelled"],
   cancelled: ["queued"],
@@ -257,6 +299,10 @@ export function updateTask(
     priority?: TaskPriority;
     delegationId?: string;
     note?: string | null;
+    verifiers?: VerifierSpec[];
+    samples?: number;
+    arms?: Arm[];
+    kind?: string | null;
   },
   cwd?: string,
 ): Task {
@@ -269,6 +315,12 @@ export function updateTask(
   if (changes.status && changes.status !== stored) {
     if (!ALLOWED[stored].includes(changes.status)) {
       throw new Error(`A ${stored} task cannot become ${changes.status}.`);
+    }
+    // A task decided by checks is done only through a promote, which only a
+    // passing attempt earns. Nobody settles it by hand.
+    if (changes.status === "done" && t.verifiers.length > 0) {
+      const promoted = readLedger(cwd).some((e) => e.type === "promote" && e.data.taskId === id);
+      if (!promoted) throw new Error(`Task ${id} has checks, so it is done only when an attempt passes them. ceo run ${id} runs it.`);
     }
     data.status = changes.status;
   }
@@ -287,6 +339,10 @@ export function updateTask(
   if (changes.priority) data.priority = changes.priority;
   if (changes.delegationId) data.delegationId = changes.delegationId;
   if (changes.note !== undefined) data.note = changes.note;
+  if (changes.verifiers !== undefined) data.verifiers = changes.verifiers;
+  if (changes.samples !== undefined) data.samples = Math.max(1, Math.floor(changes.samples));
+  if (changes.arms !== undefined) data.arms = changes.arms;
+  if (changes.kind !== undefined && changes.kind !== null) data.kind = changes.kind;
 
   if (Object.keys(data).length === 1) return t;
   const agent = (data.assignee as string | null | undefined) ?? t.assignee;
@@ -306,7 +362,7 @@ export function nextQueuedFor(agent: string, cwd?: string): Task | null {
 /** Counts by status, for status bars. */
 export function taskCounts(tasks: Task[]): Record<TaskStatus, number> {
   const c: Record<TaskStatus, number> = {
-    queued: 0, running: 0, blocked: 0, done: 0, failed: 0, cancelled: 0,
+    queued: 0, running: 0, verifying: 0, blocked: 0, done: 0, failed: 0, cancelled: 0,
   };
   for (const t of tasks) c[t.status]++;
   return c;

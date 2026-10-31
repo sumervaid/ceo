@@ -11,8 +11,8 @@ backports.
 
 | Version | Supported |
 |---|---|
-| 0.4.x | Yes |
-| Below 0.4 | No |
+| 0.5.x | Yes |
+| Below 0.5 | No |
 
 ## Credentials
 

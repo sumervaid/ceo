@@ -21,6 +21,7 @@ import * as path from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { GENESIS_PREV_HASH, type LedgerEntry } from "../core/types.js";
+import { outcomeStatsFromEntries } from "../core/outcomes.js";
 import { replayTaskEvents } from "../core/tasks.js";
 import { listWorkspaces, registryPath, type Workspace } from "../core/workspaces.js";
 import { startOfToday } from "./format.js";
@@ -42,6 +43,12 @@ export type WorkspaceSummary = Workspace & {
   chainOk: boolean;
   /** ms epoch of the last ledger entry, for "active 3m ago". */
   lastEventAt: number | null;
+  /** Attempts on record, plain runs included. Zero hides the outcome figures. */
+  attempts: number;
+  /** Verified outcomes on record. */
+  verified: number;
+  /** Dollars per verified outcome, null while nothing is verified. */
+  usdPerVerified: number | null;
 };
 
 function readEntries(ledger: string): LedgerEntry[] {
@@ -70,6 +77,9 @@ export function readWorkspaceSummary(ws: Workspace): WorkspaceSummary {
     waiting: 0,
     chainOk: true,
     lastEventAt: null,
+    attempts: 0,
+    verified: 0,
+    usdPerVerified: null,
   };
   const ledger = path.join(ws.path, ".ceo", "ledger.jsonl");
   if (!base.present || !existsSync(ledger)) return base;
@@ -107,6 +117,10 @@ export function readWorkspaceSummary(ws: Workspace): WorkspaceSummary {
   for (const t of replayTaskEvents(entries).values()) {
     if (t.status === "queued") base.waiting++;
   }
+  const outcomes = outcomeStatsFromEntries(entries);
+  base.attempts = outcomes.attempts;
+  base.verified = outcomes.verified;
+  base.usdPerVerified = outcomes.usdPerVerified;
   return base;
 }
 

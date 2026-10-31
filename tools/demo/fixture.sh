@@ -344,6 +344,99 @@ if [ "${1:-}" = "team" ]; then
   )
 fi
 
+# ---- the constellation recording: a swarm around the chief ---------------------
+# `fixture.sh sky` hires the software company. In the recording the chief
+# is asked for a swarm, hires twelve fixers across claude, codex and
+# gemini, and gives each one a flaky test. The fixers trade notes with
+# their neighbours, report to the chief, and one tells everyone.
+node - "$DEMO" <<'NODE'
+const fs = require("fs");
+const dir = process.argv[2];
+const N = 12;
+const name = (i) => `fixer-${String(((i - 1 + N) % N) + 1).padStart(2, "0")}`;
+const tests = ["retry backoff", "socket timeout", "429 handling", "jitter seed", "redirect loop", "gzip stream", "abort signal", "proxy auth", "chunked body", "keep-alive", "dns cache", "clock skew"];
+const providers = ["claude", "codex", "gemini"];
+const chat = [{
+  match: "swarm",
+  calls: [
+    { tool: "org_hire", args: { name: "fixer", count: N, provider: "claude", providers, brief: "Fix one flaky test in orbit. Find the race, make the smallest change that removes it, and run the test twenty times before calling it done.", budgetUsd: 1.5, level: "execute" } },
+    ...Array.from({ length: N }, (_, i) => ({ tool: "org_delegate", args: { agent: name(i + 1), task: `Fix the flaky ${tests[i]} test. Done when it passes twenty runs in a row.` } })),
+  ],
+  reply: `A swarm of ${N} fixers, four each on claude, codex and gemini, one flaky test apiece, $1.50 each from the allowance.\n\nO shows them working around the chief.`,
+  costUsd: 0.0091,
+}];
+fs.writeFileSync(`${dir}/sky-chat.json`, JSON.stringify(chat, null, 2));
+const script = [];
+for (let i = 1; i <= N; i++) {
+  script.push({ agent: name(i), after: 1 + (i % 3), calls: [{ tool: "org_post", args: { to: name(i + 1), text: `Claimed the ${tests[i - 1]} test. Leaving the ${tests[i % N]} test to you.` } }] });
+  script.push({ agent: name(i), after: 3 + (i % 2), calls: [{ tool: "org_post", args: { to: i % 4 === 0 ? "chief" : name(i + 5), text: i % 4 === 0 ? `The ${tests[i - 1]} test passes twenty runs in a row.` : `Seeing the same shared timer in test/helpers.ts. Worth a look before you patch.` } }] });
+}
+script.push({ agent: name(7), after: 2, calls: [{ tool: "org_post", args: { to: "*", text: "Heads up: test/helpers.ts shares one fake clock across files. Reset it in afterEach." } }] });
+script.push({ agent: "fixer-*", on: "resume", after: 1, calls: [] });
+script.push({ agent: "fixer-*", steps: ["Reading the test and the code under it.", "Running the test fifty times to see the race.", "Found it: a shared timer between cases.", "Isolating the timer per case.", "Twenty runs in a row pass.", "Committing on the agent's branch."], done: "Twenty straight runs pass." });
+script.push({ agent: "fixer-*", on: "resume", steps: ["Reading the note.", "Checking test/helpers.ts.", "Resetting the clock in afterEach.", "Twenty runs pass."], done: "Done, with the clock reset." });
+fs.writeFileSync(`${dir}/sky.json`, JSON.stringify(script, null, 2));
+NODE
+
+cat > "$DEMO/bin/demo-sky" <<'SKY'
+#!/bin/bash
+cd "$DEMO_PROJECT" || exit 1
+export STUB_CHAT="$DEMO/sky-chat.json" STUB_SCRIPT="$DEMO/sky.json" STUB_TURNS=6 STUB_DELAY_MS=850 BASH_SILENCE_DEPRECATION_WARNING=1
+exec ceo ui
+SKY
+chmod +x "$DEMO/bin/demo-sky"
+
+if [ "${1:-}" = "sky" ]; then
+  (
+    eval "$(bash "$0" env)"
+    cd "$PROJECT"
+    ceo op init '{}' >/dev/null
+    ceo company software --worktrees all >/dev/null
+    ceo op mission '{"objective":"Make every test in orbit pass twenty runs in a row","successCriteria":["no flaky test left in CI"]}' >/dev/null
+  )
+fi
+
+# ---- the evidence recording: three attempts, one check, one winner ------------
+# `fixture.sh evidence` hires the software company. The chief is asked for
+# three attempts across providers with a check. The check passes only where
+# the codex stub writes FIXED into its worktree, so one arm wins.
+cat > "$DEMO/evidence-chat.json" <<'JSON'
+[
+  {
+    "match": "flaky",
+    "calls": [
+      { "tool": "org_delegate", "args": { "agent": "implementer", "task": "Fix the flaky retry test. Done when the suite passes.", "verify": ["test -f FIXED"], "samples": 3 } }
+    ],
+    "reply": "Three attempts are running, one on each provider.\n\nThe check is test -f FIXED. The task is done only when an attempt passes it.\n\nO shows the attempts around the chief.",
+    "costUsd": 0.0064
+  }
+]
+JSON
+
+cat > "$DEMO/evidence.json" <<'JSON'
+[
+  { "agent": "implementer", "steps": ["Reading src/retry.ts and its test.", "The test fails when the backoff resets early.", "Moving the reset after the last attempt.", "Running the suite.", "Checking the result.", "Change ready."], "done": "Change ready on this arm." }
+]
+JSON
+
+cat > "$DEMO/bin/demo-evidence" <<'EVIDENCE'
+#!/bin/bash
+cd "$DEMO_PROJECT" || exit 1
+export STUB_CHAT="$DEMO/evidence-chat.json" STUB_SCRIPT="$DEMO/evidence.json" STUB_WRITE_FILE=FIXED STUB_TURNS=6 STUB_DELAY_MS=900 BASH_SILENCE_DEPRECATION_WARNING=1
+exec ceo ui
+EVIDENCE
+chmod +x "$DEMO/bin/demo-evidence"
+
+if [ "${1:-}" = "evidence" ]; then
+  (
+    eval "$(bash "$0" env)"
+    cd "$PROJECT"
+    ceo op init '{}' >/dev/null
+    ceo company software --worktrees all >/dev/null
+    ceo op mission '{"objective":"Make the retry path in orbit reliable without changing its public API","successCriteria":["the flaky test passes ten times in a row"]}' >/dev/null
+  )
+fi
+
 # ---- an org, for the collaboration recording ----------------------------------
 # `fixture.sh org` also hires two agents so the second tape can start on a
 # running org with agents on three providers, each at its own level.

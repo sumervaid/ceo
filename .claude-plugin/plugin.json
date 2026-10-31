@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "ceo",
   "displayName": "CEO",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Optional Claude Code companion to CEO, the terminal dashboard where a team of AI agents on Claude, Codex and Gemini work with each other: slash commands and MCP tools that write to the same ledger the dashboard reads.",
   "author": {
     "name": "Sumer Vaid",

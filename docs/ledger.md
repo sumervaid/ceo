@@ -35,15 +35,15 @@ ledger. Tasks have no cache at all.
 | `agent_config` | reconfigure | the changed fields only |
 | `autonomy_set` | `y`, `/autonomy` | `autonomy, previous` |
 | `budget_set` | `b`, `/budget` | `budgetUsd, previousUsd` |
-| `mission_set` | `M`, `/mission` | `objective, successCriteria, orgGuardrails` |
+| `mission_set` | `M`, `/mission`, `ceo mission checks add` | `objective, successCriteria, orgGuardrails, checks, previousObjective` |
 | `guardrail_set` | `/guardrail` | the org guardrail added |
-| `task_add` | `t`, `d`, `ceo task add`, an agent's `org_handoff` | `id, title, assignee, priority, requestedBy` |
-| `task_update` | runs, `e`, `x`, `u`, `ceo task <id> …` | `id` plus the changed fields (`status, assignee, priority, title, delegationId, note`) |
-| `delegate_start` | the runner, before spawning | `id, task, provider, model, enforcement, workdir`; `parent, depth` when an `org_ask` started the run |
+| `task_add` | `t`, `d`, `ceo task add`, an agent's `org_handoff`, the chief's `org_delegate` | `id, title, assignee, priority, requestedBy`; `autoStart, provider, verifiers, samples, arms, kind, sandbox` when set |
+| `task_update` | runs, attempts, `e`, `x`, `u`, `ceo task <id> …` | `id` plus the changed fields (`status, assignee, priority, title, delegationId, note, verifiers, samples, arms, kind`) |
+| `delegate_start` | the runner, before spawning | `id, task, provider, model, enforcement, workdir`; `parent, depth` when an `org_ask` started the run; `taskId` for a task's run; `attemptId, arm` for an attempt; `sandbox` when a container or a host runs the process |
 | `delegate_end` | the runner, when the last turn settles | `id, startSeq, outputPath, inputTokens, outputTokens, costUsd, costIsEstimate, costBasis, turns, durationMs, outputChars` |
 | `worktree_provision` | hiring an isolated agent | `branch, worktreePath` |
 | `worktree_commit` | an isolated agent's run that changed files | `sha, files, message, ledgerSeq, costUsd` |
-| `worktree_merge` | `m` | `branch, sha, ok` or `branch, ok: false, conflicts, error` |
+| `worktree_merge` | `m`, an approved merge, an automatic merge | `branch, sha, ok` or `branch, ok: false, conflicts, error` |
 | `audit` | the CEO-Auditor | `reportPath, findingCount, categories, windowStartSeq, windowEndSeq` |
 | `postmortem` | the CEO-Postmortem | `reportPath` and a summary |
 | `context_add` | `n` on the docket, `ceo docket add`, the chief's `org_context` | `id, kind, title, source, snapshot, chars, by` |
@@ -51,6 +51,12 @@ ledger. Tasks have no cache at all.
 | `context_remove` | `x` on the docket, `ceo docket rm` | `id` |
 | `context_assign` | `space` on the docket, `ceo docket give`, the chief's `org_give` | `id`, plus `by` when the chief gave the item |
 | `context_unassign` | `space` on the docket, `ceo docket take`, the chief's `org_give` | `id`, plus `by` when the chief took the item back |
+| `attempt_start` | the attempt runner, before each attempt's run | `taskId, attemptId, agent, arm, mode, why, branch, worktree, base, kind` |
+| `attempt_end` | the attempt runner, when an attempt's run settles | `taskId, attemptId, delegationId, outcome, costUsd`; `error` when the run did not finish |
+| `verify` | a check, run by an attempt, `ceo verify` or `ceo mission check` | `scope, taskId, attemptId, delegationId, verifier, status, score, detail, evidence`; `costUsd` when the check called a model |
+| `promote` | the attempt runner, for the winning attempt | `taskId, attemptId, branch, arm, score, costUsd, attempts, dissent` |
+| `approval_request` | the merge gate, for an action that needs a person | `id, action, taskId, attemptId, branch, summary, evidence` |
+| `approval_decide` | `V`, `ceo approvals approve` and `deny` | `id, decision, by`; `result` on an approval |
 | `note` | the runner, `/note` | `kind` plus fields; kinds below |
 
 ### Note kinds
@@ -60,11 +66,43 @@ ledger. Tasks have no cache at all.
 | `permission_denied` | an agent reached past the permitted level | `provider, tools, autonomy, delegationId, detail` |
 | `cost_estimated` | a claude run ended before reporting a settled cost | `delegationId, costUsd, inputTokens, outputTokens, model, detail` |
 | `message` | an agent's `org_post` or `org_ask`, or `ceo post` | `from, to, text, delegationId`; `askId` on a question, `inReplyTo` on the answer |
+| `gates` | `ceo approvals auto-merge on` or `off` | `autoMerge, by` |
+| `auto_merge` | a merge that cleared the evidence rule and landed alone | `taskId, attemptId, branch, sha, reason, evidence` |
+| `outcome_budget` | `ceo outcomes budget` | `attempts, verified, period` |
+| `promote_hook_failed` | a hook after a promotion raised an error | `taskId, detail` |
 | (none) | `/note` free text | `text` |
 
 Codex and gemini runs are always estimates. Each carries that fact on the
 `delegate_end` entry, in `costBasis`. Those runs therefore get no note each. The note is for
 the exceptional case: a provider that should have settled and did not.
+
+### Evidence events
+
+A task that runs as attempts leaves a trail. See [the queue](queue.md) and
+[verification](verification.md).
+
+| Event | Field | Values |
+| --- | --- | --- |
+| `attempt_start` | `arm` | `{provider, model}`, with `skills` and `context` when the arm carries any |
+| | `mode` | `named` when the task named the arm. `pick` for the router's best draw. `explore` for an arm tried to learn or to diversify. |
+| | `why` | The reason the router gave for the arm |
+| | `base` | The commit the attempt started from, for diffs. Null outside a git repository. |
+| `attempt_end` | `outcome` | `done`, `failed`, `cancelled` or `rate_limited` |
+| `verify` | `scope` | `task` for an attempt or a single `ceo verify`. `mission` for a mission check. |
+| | `verifier` | `{kind, name, required, weight}`. The kind is `command`, `everval` or `judge`. |
+| | `status` | `pass`, `fail` or `error`. An error means the check could not run. |
+| | `score` | 0 to 1, or null when the check gives no score |
+| | `evidence` | What the verdict rests on: an exit code, an Everval experiment id, each judge's vote |
+| `promote` | `attempts` | How many attempts reached the decision |
+| | `dissent` | The best attempt from another arm, as `{attemptId, branch, arm, pass, score}`, or null |
+| `approval_request` | `action` | `merge`, `push`, `pr`, `publish`, `send` or `pay` |
+| | `evidence` | The verdict, each check's status and each judge's vote at the time of the request |
+| `approval_decide` | `decision` | `approved` or `denied` |
+| | `by` | `you` |
+| | `result` | For an approval: whether CEO executed the action, the merge sha, the conflicts or the error |
+
+A request with no decision is pending. Pending requests are read by replay,
+as tasks are.
 
 ## The chain
 

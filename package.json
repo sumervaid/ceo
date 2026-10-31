@@ -1,6 +1,6 @@
 {
   "name": "ceo-tui",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A team of AI agents that work with each other, on Claude, Codex and Gemini, from one terminal: hire, budget, delegate, audit, with a hash-chained ledger of every run, note and dollar.",
   "keywords": [
     "agents",
@@ -41,6 +41,7 @@
     "tools/stub-gemini",
     "tools/stub-org.mjs",
     "tools/stub-gh",
+    "tools/stub-everval",
     "commands",
     "agents",
     "hooks/*.sh",
@@ -69,8 +70,10 @@
     "demo:queue": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/queue.tape'",
     "demo:setup": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/setup.tape'",
     "demo:collab": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh org && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/collab.tape'",
-    "demo:all": "pnpm demo && pnpm demo:company && pnpm demo:chat && pnpm demo:live && pnpm demo:suggest && pnpm demo:queue && pnpm demo:setup && pnpm demo:collab && pnpm demo:docket && pnpm demo:integrations",
+    "demo:all": "pnpm demo && pnpm demo:company && pnpm demo:chat && pnpm demo:live && pnpm demo:suggest && pnpm demo:queue && pnpm demo:setup && pnpm demo:collab && pnpm demo:docket && pnpm demo:integrations && pnpm demo:sky && pnpm demo:evidence",
     "demo:docket": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh team && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/docket.tape'",
+    "demo:sky": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh sky && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/sky.tape'",
+    "demo:evidence": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh evidence && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/evidence.tape'",
     "demo:integrations": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh team && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/integrations.tape'"
   },
   "engines": {

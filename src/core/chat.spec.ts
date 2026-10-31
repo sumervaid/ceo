@@ -117,7 +117,7 @@ test("the chief's process is read-only at any level, and the prompt states what 
     assert.match(compiled.text, /the chief of staff of a small org/);
     assert.match(compiled.text, /## Running the org/);
     assert.match(compiled.text, /org_hire adds an agent/);
-    assert.match(compiled.text, /at most 3 per reply, at levels up to execute/);
+    assert.match(compiled.text, /as many as the work needs, at levels up to execute/);
     assert.match(compiled.text, /Budgets come from your allowance/);
     assert.match(compiled.text, /When the operator names a provider for a piece of work, use it/);
     assert.match(compiled.text, /Your own replies have no cap/);

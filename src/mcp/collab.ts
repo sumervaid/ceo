@@ -28,8 +28,11 @@ import { policyFor } from "../core/autonomy.js";
 import { addTask, TASK_PRIORITIES, type TaskPriority } from "../core/tasks.js";
 import { allowanceOf, chiefMaxHiresPerReply, describeAllowance, maxHireLevel, staffingFor } from "../core/chat.js";
 import { readLedger } from "../core/ledger.js";
+import { recommend, renderChoices, renderRouterTable, routerTable, TASK_KINDS, taskKind, type TaskKind } from "../core/router.js";
 import { addContext, findContext, giveContext, listContext, takeContext, tokenLabel } from "../core/context.js";
 import { hasCommits, isGitRepo } from "../core/git.js";
+import { parseVerifier } from "../core/verify.js";
+import { describeSpread, hireSwarm } from "../core/swarm.js";
 import { providerFor } from "../core/providers.js";
 import { notReadyReason, providerReadiness } from "../core/setup.js";
 import { AUTONOMY_LEVELS, PROVIDERS, type AgentRecord, type AutonomyLevel, type Provider } from "../core/types.js";
@@ -55,7 +58,7 @@ export const ORG_TOOLS = [
  * chief's level at call time, read from the roster, so lowering the chief's
  * level takes effect on the very next tool call.
  */
-export const CHIEF_TOOLS = ["org_providers", "org_hire", "org_budget", "org_delegate", "org_fire", "org_docket", "org_context", "org_give"] as const;
+export const CHIEF_TOOLS = ["org_providers", "org_hire", "org_budget", "org_delegate", "org_fire", "org_docket", "org_context", "org_give", "org_router"] as const;
 
 /** The tools a run of this agent gets, for providers that allowlist by name. */
 export function orgToolsFor(agent: Pick<AgentRecord, "chief">): string[] {
@@ -350,7 +353,7 @@ function registerChiefTools(
     {
       title: "Hire an agent",
       description:
-        "Add an agent to the org: a name, a brief, a provider, a budget and a level. Any brief runs on any provider; pick the one the operator named, or one org_providers says is ready. The budget comes from your allowance. Say in your reply who you hired and why.",
+        "Add an agent to the org: a name, a brief, a provider, a budget and a level. Any brief runs on any provider; pick the one the operator named, or one org_providers says is ready. With count, hire a swarm of identical agents in one call, dealt across providers. Every budget comes from your allowance. Say in your reply who you hired and why.",
       inputSchema: {
         name: z.string().min(2).max(40).describe("Lowercase letters, digits and hyphens, such as reviewer or flaky-test-fixer."),
         brief: z.string().min(10).max(2000).describe("What the agent does and what done looks like."),
@@ -360,9 +363,11 @@ function registerChiefTools(
         level: z.enum(["observe", "propose", "execute"]).optional().describe("observe reads and reports, propose drafts changes, execute writes on its own branch. Default execute."),
         isolated: z.boolean().optional().describe("Give the agent its own git worktree and branch. Default: true at execute in a git repository with a commit."),
         guardrails: z.array(z.string().min(3).max(300)).max(10).optional().describe("Hard constraints, one per item."),
+        count: z.number().int().min(1).max(1000).optional().describe("Hire a swarm: this many identical agents, named <name>-01, <name>-02 and so on. Each gets budgetUsd. Default 1."),
+        providers: z.array(z.enum(["claude", "codex", "gemini"])).min(1).optional().describe("For a swarm: the providers to deal the members across, round-robin. Default: provider alone."),
       },
     },
-    guard((a: { name: string; brief: string; provider: Provider; model?: string; budgetUsd: number; level?: AutonomyLevel; isolated?: boolean; guardrails?: string[] }) => {
+    guard((a: { name: string; brief: string; provider: Provider; model?: string; budgetUsd: number; level?: AutonomyLevel; isolated?: boolean; guardrails?: string[]; count?: number; providers?: Provider[] }) => {
       const chiefLevel = levelNow();
       const policy = staffingFor(chiefLevel);
       if (!policy.hire) {
@@ -371,10 +376,13 @@ function registerChiefTools(
       const level: AutonomyLevel = a.level ?? "execute";
       const ceiling = maxHireLevel(chiefLevel);
       if (rank(level) > rank(ceiling)) throw new Error(`A hire by the chief of staff is at most ${ceiling}. Hire at ${ceiling} or below.`);
+      const count = a.count ?? 1;
       const self = ctx.me();
       const pool = self ? allowanceOf(self, root) : null;
-      if (pool && a.budgetUsd > pool.leftUsd + 1e-9) {
-        throw new Error(`A $${a.budgetUsd} budget is more than your allowance has left: ${describeAllowance(pool)}. Hire with a smaller budget, cut another agent's with org_budget, or ask the operator to raise the allowance with b on you.`);
+      const total = a.budgetUsd * count;
+      if (pool && total > pool.leftUsd + 1e-9) {
+        const what = count > 1 ? `${count} budgets of $${a.budgetUsd}, $${Math.round(total * 100) / 100} in all, are` : `A $${a.budgetUsd} budget is`;
+        throw new Error(`${what} more than your allowance has left: ${describeAllowance(pool)}. Hire with a smaller budget, cut another agent's with org_budget, or ask the operator to raise the allowance with b on you.`);
       }
 
       const max = chiefMaxHiresPerReply();
@@ -383,12 +391,30 @@ function registerChiefTools(
         const start = entries.find((e) => e.type === "delegate_start" && e.data.id === ctx.delegationId);
         const since = start?.seq ?? 0;
         const hires = entries.filter((e) => e.type === "hire" && e.seq > since && e.data.by === agent).length;
-        if (hires >= max) throw new Error(`The chief of staff may hire at most ${max} agents per reply. Give the work to someone already hired, or say who else is needed.`);
+        if (hires + count > max) throw new Error(`The chief of staff may hire at most ${max} agents per reply. Give the work to someone already hired, or say who else is needed.`);
       }
 
+      const spreadOver = count > 1 && a.providers && a.providers.length > 0 ? [...new Set(a.providers)] : [a.provider];
       if (!process.env.CEO_SKIP_SETUP_CHECK) {
-        const reason = notReadyReason(a.provider);
-        if (reason) throw new Error(`${a.provider} is not ready to run: ${reason} Pick a provider org_providers lists as ready.`);
+        for (const p of spreadOver) {
+          const reason = notReadyReason(p);
+          if (reason) throw new Error(`${p} is not ready to run: ${reason} Pick a provider org_providers lists as ready.`);
+        }
+      }
+
+      if (count > 1) {
+        const isolated = a.isolated ?? (level === "execute" && isGitRepo(root) && hasCommits(root));
+        const swarm = hireSwarm(
+          { name: a.name.trim(), count, brief: a.brief, providers: spreadOver, budgetUsd: Math.round(a.budgetUsd * 100) / 100, autonomy: level, isolated, guardrails: a.guardrails ?? [], by: agent },
+          root,
+        );
+        if (swarm.hired.length === 0) throw new Error(`No member of the ${a.name} swarm could be hired: ${swarm.failed[0] ?? "unknown reason"}`);
+        const after = ctx.me();
+        const left = after ? ` Allowance: ${describeAllowance(allowanceOf(after, root))}.` : "";
+        const names = swarm.hired.map((h) => h.name);
+        const shown = names.length > 6 ? `${names.slice(0, 3).join(", ")} … ${names[names.length - 1]}` : names.join(", ");
+        const missed = swarm.failed.length > 0 ? ` Not hired: ${swarm.failed.slice(0, 3).join("; ")}.` : "";
+        return `Hired a swarm of ${names.length}: ${shown}. ${describeSpread(swarm.hired.map((h) => h.provider))}, at ${level}, $${a.budgetUsd} each.${missed}${left}`;
       }
       const spec = providerFor(a.provider);
       const model = a.model?.trim() || spec.defaultModel();
@@ -472,6 +498,26 @@ function registerChiefTools(
   );
 
   server.registerTool(
+    "org_router",
+    {
+      title: "Which arm wins a kind of work",
+      description:
+        "The router's evidence for a kind of work: for each provider and model, how many attempts passed, the cost, and where the evidence came from. Then the arms the router would pick next. Give a kind, or a task title to derive the kind from. Staffing follows this evidence.",
+      inputSchema: {
+        kind: z.string().optional().describe(`One of ${TASK_KINDS.join(", ")}. Default: derived from task, else every kind.`),
+        task: z.string().optional().describe("A task title. The kind is derived from its words."),
+      },
+    },
+    guard((a: { kind?: string; task?: string }) => {
+      const kind = a.kind?.trim() || (a.task?.trim() ? taskKind(a.task) : undefined);
+      if (kind && !(TASK_KINDS as readonly string[]).includes(kind)) throw new Error(`No kind "${kind}". One of: ${TASK_KINDS.join(", ")}.`);
+      const rows = routerTable(root, kind);
+      if (!kind) return renderRouterTable(rows);
+      return `${renderRouterTable(rows)}\n\nThe router would pick, for ${kind}:\n${renderChoices(recommend(kind as TaskKind, root, 3))}`;
+    }),
+  );
+
+  server.registerTool(
     "org_budget",
     {
       title: "Set an agent's budget",
@@ -515,9 +561,11 @@ function registerChiefTools(
         task: z.string().min(5).max(2000).describe("What to do, and what done looks like."),
         priority: z.enum(["high", "normal", "low"]).optional(),
         provider: z.enum(["claude", "codex", "gemini"]).optional().describe("Run this task on this provider, when the operator named one. The teammate's own setting stays."),
+        verify: z.array(z.string().min(2).max(500)).max(10).optional().describe("Checks that decide the task: a shell command such as \"npm test\", \"everval:<collection file>#<scenario>\", or \"judge:<rubric>\". The task is done only when an attempt passes every check."),
+        samples: z.number().int().min(1).max(20).optional().describe("Run this many attempts at once, each on its own arm and worktree, and keep the winner. Default 1."),
       },
     },
-    guard((a: { agent: string; task: string; priority?: TaskPriority; provider?: Provider }) => {
+    guard((a: { agent: string; task: string; priority?: TaskPriority; provider?: Provider; verify?: string[]; samples?: number }) => {
       const chiefLevel = levelNow();
       const policy = staffingFor(chiefLevel);
       if (!policy.start) {
@@ -535,8 +583,10 @@ function registerChiefTools(
         if (reason) throw new Error(`${a.provider} is not ready to run: ${reason} Pick a provider org_providers lists as ready, or tell the operator.`);
       }
       const provider = a.provider && a.provider !== target.provider ? a.provider : null;
-      const t = addTask({ title: a.task, assignee: a.agent, priority: a.priority, requestedBy: agent, autoStart: true, provider }, root);
-      const on = provider ? ` It runs on ${provider} this time; ${a.agent} usually runs on ${target.provider}.` : "";
+      const verifiers = (a.verify ?? []).map(parseVerifier);
+      const t = addTask({ title: a.task, assignee: a.agent, priority: a.priority, requestedBy: agent, autoStart: true, provider, verifiers, samples: a.samples }, root);
+      const evidence = [t.samples > 1 ? ` It runs as ${t.samples} attempts and keeps the winner.` : "", t.verifiers.length > 0 ? ` It is done only when an attempt passes ${t.verifiers.length} check${t.verifiers.length === 1 ? "" : "s"}.` : ""].join("");
+      const on = (provider ? ` It runs on ${provider} this time; ${a.agent} usually runs on ${target.provider}.` : "") + evidence;
       if (t.status === "blocked") return `Queued ${t.id} for ${a.agent}, but it is blocked: ${t.blockedReason}. The operator has to unblock it.`;
       const busy = liveRuns(root).some((r) => r.agent === a.agent && r.live);
       return busy

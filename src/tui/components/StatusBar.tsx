@@ -6,6 +6,10 @@
  * the one a person running four orgs actually wants to know at the end of
  * the day. No other line on the screen adds it up.
  *
+ * The outcome segment, `N verified · $X/verified`, shows once the workspace
+ * has any attempts. Dollars per verified outcome is the figure the allocation
+ * of dispatch slots reads, so the bar shows the same number.
+ *
  * A running delegation gets its own segment because it is the one state the
  * rest of the line cannot show. An agent dispatched and not yet reported
  * back has no cost attributed to it, so it is invisible in the other numbers.
@@ -35,6 +39,10 @@ export type StatusBarProps = {
   queued: number;
   blocked: number;
   autoDispatch: boolean;
+  /** Verified outcomes and dollars per verified in this workspace. Null hides the segment. */
+  outcome?: { verified: number; usdPerVerified: number | null } | null;
+  /** Requests waiting for a decision. */
+  approvals?: number;
   focus: "sidebar" | "roster" | "queue";
   width: number;
 };
@@ -63,8 +71,10 @@ const LEGEND: Array<{ text: string; drop: number; only?: "roster" | "queue" }> =
   { text: "e edit · x cancel · u requeue", drop: 7, only: "queue" },
   { text: "+ company", drop: 14.5 },
   { text: "L live", drop: 14.2 },
+  { text: "O sky", drop: 14.15 },
   { text: "D docket", drop: 14.1 },
   { text: "I integrations", drop: 12.5 },
+  { text: "V approvals", drop: 12.4 },
   { text: "C chat", drop: 13.5 },
   { text: "h hire", drop: 8 },
   { text: "p suggest", drop: 7.5 },
@@ -117,6 +127,8 @@ export function StatusBar({
   queued,
   blocked,
   autoDispatch,
+  outcome,
+  approvals = 0,
   focus,
   width,
 }: StatusBarProps) {
@@ -132,10 +144,15 @@ export function StatusBar({
   if (blocked > 0) queueBits.push(`${blocked} blocked`);
   if (dangling > 0) queueBits.push(`${dangling} dangling`);
   const queue = queueBits.length > 0 ? ` · ${queueBits.join(" · ")}` : "";
+  const waiting = approvals > 0 ? ` · ${approvals} to approve` : "";
   const auto = autoDispatch ? " AUTO " : "";
+  const outcomeText = outcome
+    ? ` · ${outcome.verified} verified${outcome.usdPerVerified !== null ? ` · ${compactUsd(outcome.usdPerVerified)}/verified` : ""}`
+    : "";
 
   const used = stats.length + EMOJI_SLACK + auto.length;
-  const withQueue = used + queue.length;
+  // The outcome segment and the approvals count sit beside the spend and are dropped with the queue.
+  const withQueue = used + queue.length + outcomeText.length + waiting.length;
 
   const legend = legendFor(width - withQueue, focus);
 
@@ -146,9 +163,11 @@ export function StatusBar({
   return (
     <Box>
       <Text>{stats}</Text>
+      {outcomeText && showQueue ? <Text color="green">{outcomeText}</Text> : null}
       {queue && showQueue ? (
         <Text color={dangling > 0 || blocked > 0 ? "red" : "yellow"}>{queue}</Text>
       ) : null}
+      {waiting && showQueue ? <Text color="yellow">{waiting}</Text> : null}
       {auto ? (
         <Text color="yellow" inverse bold>
           {auto}

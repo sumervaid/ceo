@@ -75,6 +75,26 @@ autonomy level. The process refused. Not an error: the level is working as
 designed. The fault lies in a brief that asks for an action the level forbids, or in a level
 too low for the job. `y` raises the level, knowingly.
 
+**A run shows `waiting`.** A provider refused the run for a rate or usage
+limit. The refusal is not a failure of the work. The task is queued again.
+The task's note reads `<provider> limit: back in the queue until <time>`.
+The provider waits until the reset time the provider stated. With no stated
+time, the wait is 1 minute, then 2, then 4, up to 30. The dashboard
+dispatches again when the wait ends. The [constellation](sky.md) shows `◌`
+for the agent and names the provider with the time left. A Claude or ChatGPT
+subscription has one usage window for every session on the account. A metered
+key has limits per minute. The wait is short. See [swarms and
+limits](swarms.md).
+
+**A swarm starts, then every run waits.** The swarm may have used up the
+provider's usage window. The wait ends at the reset. `v` on the roster moves
+an agent to another provider. The `limit` alert names the provider and the
+expected time back.
+
+**The machine slows with many agents running.** Each agent is a node process
+and an MCP server, a few hundred megabytes together. `CEO_MAX_RUNNING=8`
+sets a ceiling of eight runs at once. Tasks beyond the ceiling stay queued.
+
 **`$0.0046 est.`** The figure is computed from tokens at list price. Every
 codex run and every gemini run is an estimate. A claude run is an estimate
 only after a cancel or a crash before settling.

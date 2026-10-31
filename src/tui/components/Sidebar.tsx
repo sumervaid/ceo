@@ -16,7 +16,8 @@
  * The leading dot is the org's health: green is fine, yellow is work
  * waiting, red is a broken chain or a dangling run. The spinner and count
  * are runs in flight in *this* dashboard. The ·N is the queue depth. The
- * money is today's spend from that workspace's own ledger. Nothing here is a
+ * money is today's spend from that workspace's own ledger, followed by dollars
+ * per verified outcome once the workspace has one. Nothing here is a
  * second source of truth: it is all read off each repo's `.ceo/` by
  * `workspaces.ts`.
  *
@@ -157,6 +158,8 @@ function Row({
         : { text: "   ", dim: true },
     ],
     [{ text: ws.hasOrg ? compactUsd(ws.spendTodayUsd) : "no org", dim: !ws.hasOrg, color: ws.hasOrg ? undefined : "gray" }],
+    // Dollars per verified outcome, once one exists. First to go when the column narrows.
+    [ws.usdPerVerified !== null ? { text: ` ${compactUsd(ws.usdPerVerified)}/v`, dim: true } : { text: "" }],
   ];
 
   const kept: Cell[] = [];

@@ -6,7 +6,9 @@
  * and whether it gets a worktree, then the total of the caps. Nothing is
  * hidden behind a second screen, so the decision takes one look.
  *
- * `w` cycles the worktree choice for the whole company. Enter hires every
+ * `w` cycles the worktree choice for the whole company. ← and → set the
+ * team size: at ×8 every seat becomes eight agents, dealt across the ready
+ * providers. Enter hires every
  * seat and the chief of staff, then the dashboard opens the chat, because
  * the next useful thing is a sentence to the chief.
  */
@@ -14,7 +16,8 @@
 import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 
-import { COMPANIES, planCompany, WORKTREE_LABEL, WORKTREE_MODES, type CompanyPlan, type WorktreeMode } from "../../core/companies.js";
+import { COMPANIES, MAX_SCALE, planCompany, WORKTREE_LABEL, WORKTREE_MODES, type CompanyPlan, type WorktreeMode } from "../../core/companies.js";
+import { describeSpread } from "../../core/swarm.js";
 import { CHIEF_ALLOWANCE_USD } from "../../core/chat.js";
 import { isEscape, isReturn } from "../keys.js";
 import { autonomyColor, clamp, compactBudget, fit, providerColor, shortModel } from "../format.js";
@@ -53,17 +56,25 @@ function providerSpan(providers: string[]): Row {
   return out;
 }
 
+/** The next team size: one step at a time up to five, then larger steps. */
+function nextSize(s: number, dir: 1 | -1): number {
+  const steps = [1, 2, 3, 4, 5, 8, 10, 12, 16, 20, 25, 30, 40, 50];
+  if (dir > 0) return steps.find((n) => n > s) ?? s;
+  return [...steps].reverse().find((n) => n < s) ?? 1;
+}
+
 export function CompanyPicker({ cwd, width, onHire, onClose }: CompanyPickerProps) {
   const [index, setIndex] = useState(0);
   const [mode, setMode] = useState<WorktreeMode | null>(null);
+  const [scale, setScale] = useState(1);
   const inner = Math.max(20, width - 4);
 
   // One plan per company, read once per worktree choice. A plan reads the
   // roster and the providers' readiness, which is cheap and does not change
   // while the picker is open.
   const plans = useMemo(
-    () => COMPANIES.map((c) => planCompany(c, cwd, mode ? { worktrees: mode } : {})),
-    [cwd, mode],
+    () => COMPANIES.map((c) => planCompany(c, cwd, { ...(mode ? { worktrees: mode } : {}), scale })),
+    [cwd, mode, scale],
   );
   const plan = plans[index];
   const effective = plan.worktrees;
@@ -83,6 +94,14 @@ export function CompanyPicker({ cwd, width, onHire, onClose }: CompanyPickerProp
     }
     if (/^[1-9]$/.test(input) && Number(input) <= COMPANIES.length) {
       setIndex(Number(input) - 1);
+      return;
+    }
+    if (key.rightArrow || input === "l" || input === "=") {
+      setScale((s) => Math.min(MAX_SCALE, nextSize(s, 1)));
+      return;
+    }
+    if (key.leftArrow || input === "h" || input === "-") {
+      setScale((s) => Math.max(1, nextSize(s, -1)));
       return;
     }
     if (input === "w") {
@@ -123,15 +142,40 @@ export function CompanyPicker({ cwd, width, onHire, onClose }: CompanyPickerProp
   };
 
   const seats: Row[] = [];
+  const groupWidth = clamp(Math.max(...plan.seats.map((s) => s.group.length)) + 4, 8, 18);
   if (plan.chief.hire) {
     seats.push(seatRow(plan.chief.name, plan.chief.provider, providerFor(plan.chief.provider as Provider).defaultModel(), "execute", 0, [{ text: `chief of staff · no cap · ${compactBudget(CHIEF_ALLOWANCE_USD)} to give out`, dim: true }], "◆", null));
   }
-  for (const s of plan.seats) {
-    const extra: Row = [];
-    if (s.isolated) extra.push({ text: "⎇ worktree", color: "cyan" });
-    if (s.movedFrom) extra.push({ text: `${s.isolated ? "  " : ""}${s.movedFrom} not ready`, color: "yellow" });
-    seats.push(seatRow(s.name, s.provider, s.model, s.autonomy, s.budgetUsd, extra, "●", s.skip));
+  if (plan.scale === 1) {
+    for (const s of plan.seats) {
+      const extra: Row = [];
+      if (s.isolated) extra.push({ text: "⎇ worktree", color: "cyan" });
+      if (s.movedFrom) extra.push({ text: `${s.isolated ? "  " : ""}${s.movedFrom} not ready`, color: "yellow" });
+      seats.push(seatRow(s.name, s.provider, s.model, s.autonomy, s.budgetUsd, extra, "●", s.skip));
+    }
+  } else {
+    // A scaled company reads one row per seat: the swarm, its spread, its level.
+    for (const group of [...new Set(plan.seats.map((s) => s.group))]) {
+      const members = plan.seats.filter((s) => s.group === group);
+      const first = members[0];
+      const spread = describeSpread(members.map((m) => m.provider));
+      seats.push([
+        { text: "  ✦ ", color: providerColor(first.provider), bold: true },
+        { text: `${group} ×${members.length}`.padEnd(groupWidth), bold: true },
+        { text: first.autonomy.padEnd(11), color: autonomyColor(first.autonomy) },
+        { text: `${compactBudget(first.budgetUsd)} each`.padEnd(11) },
+        { text: spread, dim: true },
+        ...(first.isolated ? [{ text: "  ⎇ worktrees", color: "cyan" }] : []),
+      ]);
+    }
   }
+  const hires = plan.seats.filter((s) => !s.skip).length + (plan.chief.hire ? 1 : 0);
+
+  const sizeLine: Row = [
+    { text: "team size  ", dim: true },
+    { text: `×${plan.scale}`, bold: true, color: plan.scale > 1 ? "magenta" : undefined },
+    { text: `  ${hires} agents · ← → changes`, dim: true },
+  ];
 
   const worktreeLine: Row = [
     { text: "worktrees  ", dim: true },
@@ -140,7 +184,7 @@ export function CompanyPicker({ cwd, width, onHire, onClose }: CompanyPickerProp
   ];
 
   return (
-    <Modal title="Start a company" footer="↑↓ or 1-6 pick · w worktrees · enter hire and open the chat · esc close" width={width}>
+    <Modal title="Start a company" footer="↑↓ or 1-6 pick · ← → team size · w worktrees · enter hire and open the chat · esc close" width={width}>
       {list.map((row, i) => (
         <RowView key={i} row={row} width={inner} />
       ))}
@@ -151,6 +195,7 @@ export function CompanyPicker({ cwd, width, onHire, onClose }: CompanyPickerProp
         <RowView key={i} row={row} width={inner} />
       ))}
       <Text> </Text>
+      <RowView row={sizeLine} width={inner} />
       <RowView row={worktreeLine} width={inner} />
       <RowView
         row={[

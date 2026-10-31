@@ -7,6 +7,7 @@
 //     "say": "optional text the agent says after the calls" }
 // An entry with "steps": ["line", ...] and "done": "line" gives the agent
 // words for each step and for the end, in place of the stub's filler.
+// "agent" may hold * as a wildcard, so "fixer-*" covers a whole swarm.
 // An entry runs when the run's agent and prompt match, at step `after` of a
 // first run or of a resumed one (`on`: "first", the default, or "resume").
 // The calls reach the real server, so every note is a real ledger event.
@@ -87,6 +88,14 @@ export async function connect(cfg) {
  * The script for this run. `atStep(i)` plays the entries due at step i and
  * reports each call and line through the provider's own emitters.
  */
+/** An entry's agent: an exact name, or a pattern with * for any run of characters. */
+function agentMatches(pattern, name) {
+  if (!name) return false;
+  if (!pattern.includes("*")) return pattern === name;
+  const re = new RegExp(`^${pattern.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
+  return re.test(name);
+}
+
 export function script({ provider, args, prompt, resumed, onCall, onSay }) {
   const file = process.env.STUB_SCRIPT;
   if (!file) return { atStep: async () => {}, close: () => {}, line: () => null, done: null };
@@ -96,7 +105,7 @@ export function script({ provider, args, prompt, resumed, onCall, onSay }) {
     const said = String(prompt ?? "").toLowerCase();
     entries = JSON.parse(readFileSync(file, "utf8")).filter(
       (e) =>
-        (!e.agent || e.agent === server?.agent) &&
+        (!e.agent || agentMatches(e.agent, server?.agent)) &&
         (!e.match || said.includes(String(e.match).toLowerCase())) &&
         (e.on ?? "first") === (resumed ? "resume" : "first"),
     );

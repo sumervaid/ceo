@@ -85,7 +85,7 @@ call time, against the level on the roster at that moment.
 Limits that hold at every level:
 
 - Every budget the chief gives comes from the allowance. A hire's budget and a raise draw on the allowance. A cut returns what the chief had given.
-- The chief hires at most 3 agents per reply. `CEO_CHIEF_MAX_HIRES` changes the figure.
+- The chief has no limit on hires per reply. The allowance bounds the spend. `CEO_CHIEF_MAX_HIRES` sets a limit, as a whole number of hires per reply.
 - A hire is at `execute` or below, and never above the chief's own level.
 - The provider of a hire must be ready. `org_providers` tells the chief which ones are.
 - No level lets the chief change a level, or settle a cost.
@@ -101,13 +101,14 @@ elsewhere, or a raise of the allowance by the operator.
 | Tool | Does |
 | --- | --- |
 | `org_providers` | Which of claude, codex and gemini are ready, the models of each, how many agents run on each |
-| `org_hire` | Hire with a name, brief, provider, model, budget, level, worktree and guardrails |
+| `org_hire` | Hire with a name, brief, provider, model, budget, level, worktree and guardrails. With `count` and `providers`, hire a swarm. |
 | `org_budget` | Set any teammate's budget, from the allowance |
-| `org_delegate` | Give a teammate work that starts when the reply ends, on a named provider when there is one |
+| `org_delegate` | Give a teammate work that starts when the reply ends, on a named provider when there is one. `verify` lists checks that decide the task. `samples` runs that many attempts at once and keeps the winner. |
 | `org_fire` | Fire an idle agent the chief hired, with a reason |
 | `org_docket` | Every docket item, with the size of each and the teammates who hold each |
 | `org_context` | Add a file, folder, issue, pull request, Hub card, paper, page, skill or note to the docket, then give the item to teammates |
 | `org_give` | Give a docket item to a teammate, or take the item back |
+| `org_router` | Which provider and model have won a kind of work, with passes, cost and source, then the three arms the router would pick next. Staffing follows this evidence. |
 
 The chief also has every tool on the [collaboration](collaboration.md)
 page: the roster, the board, outputs, live traces, notes, questions and
@@ -124,6 +125,27 @@ does. The chat shows the provider beside every delegation, bold when the
 operator named the provider. The queue says "on gemini". The live view puts the card
 in that provider's column while the run is live. A new hire takes the
 named provider directly.
+
+## Hiring a swarm
+
+A request for many agents is one `org_hire` call. "Hire twelve fixers across
+claude, codex and gemini, one flaky test each" becomes `count: 12` and
+`providers: ["claude", "codex", "gemini"]`. The call hires `fixer-01` to
+`fixer-12`, dealt round-robin across the providers named. Each member gets
+the budget in the call.
+
+- **The allowance bounds the swarm.** The total is the budget times the
+  count. A swarm of twelve at $1.50 draws $18. A swarm too big for the
+  allowance is refused, with the figure left.
+- **Every provider named must be ready.** `org_providers` lists the ready
+  ones.
+- **A member that cannot be hired is reported.** The rest go ahead.
+- **The count runs from 1 to 1000.** `org_hire` with no count hires one agent.
+
+The chief then gives each member a task with `org_delegate`. Each task
+starts when the reply ends. A provider limit puts a task back in the queue.
+See [swarms and limits](swarms.md). The [constellation](sky.md) shows the
+swarm at work.
 
 ## Switching the chief's provider
 
@@ -181,6 +203,7 @@ against that agent's own cap.
 | `delegate_start` with `via: "chat"` | A message is sent. `resumed` names the session, when resumed. |
 | `delegate_end` with `sessionId` and `outcome` | The reply ends |
 | `hire` with `by: <chief>` | The chief hires |
+| `note` of kind `swarm` | The chief hires a swarm, with the names hired and failed |
 | `task_add` with `requestedBy` and `autoStart: true` | The chief delegates |
 | `fire` with `by: <chief>` | The chief fires |
 | `note` of kind `chat_new` | A new conversation starts |

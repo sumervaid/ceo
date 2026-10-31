@@ -159,7 +159,13 @@ export type LedgerEventType =
   | "context_update"
   | "context_remove"
   | "context_assign"
-  | "context_unassign";
+  | "context_unassign"
+  | "attempt_start"
+  | "attempt_end"
+  | "verify"
+  | "promote"
+  | "approval_request"
+  | "approval_decide";
 
 /** Fields common to every ledger entry, before hashing. */
 export type LedgerEntryBase = {
@@ -201,8 +207,10 @@ export const GENESIS_PREV_HASH = "0".repeat(64);
 export type Mission = {
   /** What the org is trying to achieve. Free text. */
   objective: string;
-  /** How the org knows it is done. */
+  /** How the org knows it is done, in words. */
   successCriteria: string[];
+  /** The same criteria as checks a machine can run. The mission is met when every check passes. */
+  checks?: VerifierSpec[];
   /** Guardrails applied to every agent, on top of their own. */
   orgGuardrails: string[];
   /** ms epoch of the last change. */
@@ -232,7 +240,7 @@ export type DelegationCost = {
   /** The CLI session the run used, so a later run can resume the conversation. */
   sessionId?: string | null;
   /** How the run ended. Absent on entries written before 0.4, which read as done. */
-  outcome?: "done" | "failed" | "cancelled";
+  outcome?: "done" | "failed" | "cancelled" | "rate_limited";
 };
 
 export type SpendRollup = {
@@ -279,3 +287,67 @@ export type AuditReport = {
   findings: AuditFinding[];
   reportPath: string;
 };
+
+// ---------------------------------------------------------------------------
+// Evidence: attempts, verification, promotion
+// ---------------------------------------------------------------------------
+
+/**
+ * A check that decides whether an attempt did the work.
+ *
+ *   command   a shell command run in the attempt's worktree; exit 0 passes
+ *   everval   an Everval collection graded against the attempt's output
+ *   judge     agents at observe on other providers read the attempt and vote
+ *
+ * `required` checks must pass for the attempt to pass. `weight` counts toward
+ * the attempt's score.
+ */
+export type VerifierSpec =
+  | { kind: "command"; name?: string; run: string; timeoutSec?: number; required?: boolean; weight?: number }
+  | {
+      kind: "everval";
+      name?: string;
+      /** A collection file, JSON or YAML, relative to the project root. */
+      collection: string;
+      /** The scenario to grade. Default: the collection's only scenario. */
+      scenario?: string;
+      /** A command whose stdout is the JSON output object. Default: the attempt's changed files. */
+      output?: string;
+      required?: boolean;
+      weight?: number;
+    }
+  | {
+      kind: "judge";
+      name?: string;
+      /** What the judges look for. */
+      rubric: string;
+      /** How many judges vote, each on a different provider where possible. Default 2. */
+      judges?: number;
+      /** The providers to draw judges from. Default: every ready provider other than the attempt's. */
+      providers?: Provider[];
+      required?: boolean;
+      weight?: number;
+    };
+
+export type VerifyStatus = "pass" | "fail" | "error";
+
+/** One way to attempt a task: where it runs and what it carries. */
+export type Arm = {
+  provider: Provider;
+  model: string;
+  /** Skill names given to this attempt on top of the agent's own. */
+  skills?: string[];
+  /** Docket item ids given to this attempt on top of the agent's own. */
+  context?: string[];
+};
+
+/** "codex gpt-5 +2 skills". */
+export function armLabel(arm: Arm): string {
+  const extras = [arm.skills?.length ? `+${arm.skills.length} skill${arm.skills.length === 1 ? "" : "s"}` : "", arm.context?.length ? `+${arm.context.length} context` : ""].filter(Boolean);
+  return [arm.provider, arm.model, ...extras].join(" ");
+}
+
+/** A stable key for an arm, for tables keyed by arm. */
+export function armKey(arm: Arm): string {
+  return [arm.provider, arm.model, [...(arm.skills ?? [])].sort().join("+"), [...(arm.context ?? [])].sort().join("+")].join("|");
+}

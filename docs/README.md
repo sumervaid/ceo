@@ -17,6 +17,11 @@ The [README](../README.md) is the short one.
 | [Integrations](integrations.md) | GitHub issues and pull requests, Hugging Face cards, alerts. |
 | [Chat](chat.md) | A sentence to the chief of staff should become a staffed team. |
 | [Collaboration](collaboration.md) | Agents should read each other's traces, pass notes mid-task, ask and answer, hand work off. |
+| [The constellation](sky.md) | The org should read as a sky: the chief of staff a black hole, every agent a star, every note a comet. |
+| [Swarms and limits](swarms.md) | Many copies of one agent should work at once. Also for what a provider limit does to a run. |
+| [Verification](verification.md) | A task should count as done only when a check passes. Also for the mission's checks and for Everval. |
+| [The router](router.md) | Staffing should follow which provider and model won this kind of work. |
+| [Sandboxes](sandboxes.md) | A run should happen in a container that is discarded when the process exits. |
 | [Keys](keys.md) | Every key in the dashboard, by panel. |
 | [Command line](cli.md) | Every `ceo` subcommand, with examples. |
 
@@ -30,6 +35,8 @@ The [README](../README.md) is the short one.
 | [The queue](queue.md) | Tasks as ledger objects, derived blocking, the dispatcher. |
 | [The ledger](ledger.md) | Every event type with the fields of each, the hash chain, what `verify()` catches. |
 | [Money](money.md) | Settled cost, estimates, budgets as hard caps, what sub-cent spend looks like. |
+| [Judges and gates](gates.md) | Judges that vote, the merge rule, approval requests, the auto-merge setting. |
+| [Outcomes](outcomes.md) | Verified results as the budget unit, dollars per verified outcome, how workspaces share dispatch slots. |
 
 ## Working on CEO
 

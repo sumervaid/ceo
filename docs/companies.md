@@ -16,12 +16,18 @@ and gemini and opens the chat. The whole path takes under ten seconds.
 | A directory with no org | `n` creates the org and opens the picker |
 | The dashboard | `+` opens the picker |
 | The terminal | `ceo company <id>` hires one, `ceo company` lists the companies |
+| The terminal, scaled | `ceo company <id> --size 8` turns each seat into eight agents |
 
 The picker shows every company and, below the list, exactly what `enter`
 would hire: each seat with the seat's provider, model, level, budget and
 worktree, then the total of the budgets. `↑` `↓` or the digits `1` to `6` pick a
 company. `w` cycles the worktree choice. `enter` hires the company and
 opens the chat with the chief of staff. Nothing runs until work is given.
+
+The picker also sets the team size. `←` `→` step through 1 to 5, then 8,
+10, 12, 16, 20, 25, 30, 40 and 50. The line under the seats shows the size
+and the total of agents. Each seat then hires that many agents. See
+[team size](#team-size).
 
 ## The companies
 
@@ -45,6 +51,27 @@ marks the move in yellow. `v` on the roster moves any agent later.
 
 No seat is hired at `autonomous`. Readers sit at `observe` or `propose`.
 Writers sit at `execute`, where a human merges every branch.
+
+## Team size
+
+Size 1 hires each seat once. A larger size turns each seat into a swarm. At
+size 8, the software team's four seats become thirty-two agents. The
+budget total grows by the same factor.
+
+- **Names.** `implementer-01` to `implementer-08`. A name already in the
+  org is skipped.
+- **Providers.** The agents of a seat are dealt round-robin across every
+  ready provider, starting with the seat's own. The picker marks a
+  provider the seat moved away from.
+- **Brief.** Each agent's brief ends with a line that asks the agent to
+  claim work on the board before starting. The line keeps two agents off
+  one piece.
+- **Worktrees.** The worktree choice applies to every agent of the seat.
+- **Limit.** The picker and `--size` stop at 50 per seat. `ceo swarm` and
+  the chief of staff have no such stop.
+
+A large company draws on the provider's usage window as fast as the agents
+work. See [swarms and limits](swarms.md).
 
 ## Worktrees
 
@@ -82,6 +109,7 @@ ceo company
 ceo company software
 ceo company review --worktrees none
 ceo company full --worktrees all
+ceo company software --size 4
 ```
 
 `ceo company <id>` creates the org when the directory has none, hires the

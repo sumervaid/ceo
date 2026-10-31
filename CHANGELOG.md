@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.5.0 (2026-10-31)
+
+### Added
+- **Swarms.** Many copies of one agent, hired in one step and dealt
+  round-robin across providers. The members are named `<name>-01`,
+  `<name>-02` and so on. `ceo swarm <name> <n>` takes `--brief`,
+  `--providers`, `--budget`, `--level` and `--task`. `ceo company <id>
+  --size n` and the team size in the company picker, set with `←` `→`, turn
+  each seat into `n` agents. The chief of staff's `org_hire` takes `count`
+  and `providers`. One `note` of kind `swarm` records each swarm.
+- **The constellation.** `O` on the dashboard, or `ceo sky`. The chief of
+  staff is a black hole with an accretion disk that turns faster as more
+  agents work. Agents are stars in the colours of the providers. A working
+  agent spirals in and twinkles. A waiting, finished, failed or idle agent
+  has a mark of its own. Lines join agents that traded notes. Each new note
+  flies as a comet that bends around the hole. A note to everyone is a
+  ripple. A new agent is born at the horizon. A crowded sky drops names and
+  keeps stars. Hundreds of agents fit. `←` `→` select a star, `enter`
+  opens the agent, `L` switches to the cards, `C` opens the chat.
+- **Provider limits that pause.** A run refused for a rate or usage limit
+  puts the task back in the queue. `delegate_end` records the outcome
+  `rate_limited`. A `note` of kind `rate_limited` records the provider and
+  `retryAt`. The provider waits until the stated reset. With no stated reset,
+  the provider backs off for 1, 2, 4 minutes and so on up to 30. The dashboard dispatches again when the
+  limit lifts. The run shows `waiting`.
+- **The `limit` alert**, the seventh event. Digit `7` on the integrations
+  screen turns the event on and off.
+- **`CEO_MAX_RUNNING`**, an optional ceiling on runs at once, and
+  **`CEO_CHIEF_MAX_HIRES`**, an optional ceiling on hires per reply of the
+  chief of staff.
+- **Attempts.** A task with checks, or with several attempts, runs as
+  attempts. Each attempt is the assignee on one arm, in a separate git
+  worktree on branch `ceo/<agent>--<attempt>`. The attempts run at the same time.
+  Each finished attempt is verified. The passing attempt with the best score
+  is promoted. The cheaper attempt wins a tie. One dissent is kept: the best
+  attempt from another arm. A task with checks reaches done only through a
+  promote. The ledger gains `attempt_start`, `attempt_end`, `verify` and
+  `promote`. The task status `verifying` covers the time between the last
+  attempt and the verdict. `ceo task add` takes `--verify "<check>"`,
+  `--samples n`, `--arm provider[:model]` and `--sandbox docker`. `ceo run
+  <task> [--samples n]` runs a task now. The task form on `t` has checks and
+  attempts fields. Queue rows show `×n` and `⚖n` and the winning arm. The
+  chief's `org_delegate` takes `verify` and `samples`.
+- **Verifiers.** A check is a command, an Everval collection or a vote of
+  judges. Every result is a `verify` event with the status, the score and the
+  evidence. The statuses are `pass`, `fail` and `error`. An error means the
+  check could not run. An error is never a pass. `ceo verify <check> [--in
+  <dir>]` runs one check. See [verification](docs/verification.md).
+- **Everval as a verifier.** `everval:<collection>#<scenario>` grades an
+  Everval collection against the attempt's changed files. The experiment
+  decides the verdict, never the exit code. `CEO_EVERVAL_BIN` names the
+  binary. Data stays in `.ceo/everval`.
+- **Mission checks.** A mission carries checks that a machine can run. `ceo
+  mission checks [add <check>]` lists or adds checks. `ceo mission check`
+  runs every check. The exit code is 1 unless the mission is met. The mission
+  panel shows one mark per check.
+- **Judges and gates.** Judges are agents at observe on providers other than
+  the attempt's. Every judge must say pass. A merge lands alone only when
+  four conditions hold. The attempt passed. A deterministic check passed.
+  Every judge agreed. The org setting allows auto-merge. The setting is off by
+  default. Every other
+  action class waits for a person as an `approval_request`. `V` opens the
+  approvals. `ceo approvals [approve|deny <id>|auto-merge on|off]` does the
+  same from the terminal. See [judges and gates](docs/gates.md).
+- **The router.** Each kind of work has a record of passes per arm. Thompson
+  sampling draws the next arms from the record. Reflex's store adds a prior
+  at half weight. `ceo router [kind]` prints the evidence. `ceo router pick
+  "<title>" [-n 3]` prints the arms the router would choose. The chief's
+  `org_router` reads the same record. See [the router](docs/router.md).
+- **Outcomes.** The budget unit is a verified result. Dollars stay as a
+  column. The status bar shows `N verified · $X/verified`. A workspace
+  budget caps attempts and sets a verified target. Workspaces with a lower
+  cost per verified outcome get more dispatch slots. `ceo outcomes [--all]
+  [budget ...]` prints the figures. See [outcomes](docs/outcomes.md).
+- **Sandboxes.** `CEO_SANDBOX=docker` runs each turn in a container that is
+  discarded when the process exits. `CEO_SANDBOX_IMAGE` and `CEO_DOCKER_BIN`
+  set the image and the binary. Autonomy is still enforced by the agent's
+  process. A sandboxed run gets no org tools. `ceo sandbox [test]` reports
+  readiness. An ssh sandbox is experimental. See
+  [sandboxes](docs/sandboxes.md).
+- **The Reflex loop.** Reflex is getting a CEO source adapter. The adapter
+  reads `.ceo/runs` and treats `verify` events as reward. A new Reflex skill
+  then becomes an arm that the router can try.
+- **Test doubles.** `tools/stub-docker` and `tools/stub-everval` stand in for
+  docker and everval at $0.
+
+### Changed
+- No ceiling on agents running at once by default. The ceilings that exist
+  belong to the providers and the machine.
+- The chief of staff has no limit on hires per reply by default. The
+  allowance bounds the spend.
+- The chief of staff holds nine tools that no other agent has, up from eight.
+  `org_router` is the ninth. The org server still has ten tools for every agent.
+
 ## 0.4.0 (2026-10-27)
 
 Claude, Codex and Gemini agents on one team, working with each other

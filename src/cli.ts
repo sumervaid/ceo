@@ -35,6 +35,8 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOp, snapshotJson } from "./bridge.js";
+import { outcomesCmd } from "./cli/outcomes.js";
+import { approvalsCmd } from "./cli/approvals.js";
 import { renderSnapshot } from "./tui/snapshot.js";
 import { readOrgState } from "./tui/data.js";
 import { compactBudget, compactUsd } from "./tui/format.js";
@@ -47,14 +49,26 @@ import { ALERT_KINDS, ALERT_LABEL, alertsPath, describeChannels, readAlerts, sen
 import { authStatus, billingExplainer, codexAuthStatus, codexBillingExplainer, geminiAuthStatus, geminiBillingExplainer } from "./core/auth.js";
 import { anyReady, loginCommand, renderSetup, resetReadiness } from "./core/setup.js";
 import { renderProposal, suggestTeam } from "./core/suggest.js";
+import { routerCmd } from "./cli/router.js";
 import { describeMessage, liveRuns, messages as readMessages, postMessage, traceFor, YOU } from "./core/collab.js";
 import { reflexScanCommand, reflexStatus, resetReflexStatus } from "./core/reflex.js";
 import { hire } from "./core/roster.js";
 import { initLedger } from "./core/ledger.js";
-import { PROVIDERS, type Provider } from "./core/types.js";
+import { AUTONOMY_LEVELS, PROVIDERS, type AutonomyLevel, type Provider } from "./core/types.js";
+import { describeSpread, hireSwarm } from "./core/swarm.js";
+import { parseVerifier } from "./core/verify.js";
+import { providerFor } from "./core/providers.js";
+import { runCmd } from "./cli/run.js";
+import { syncReflexSkills } from "./core/loop.js";
+import { isSandboxKind } from "./core/sandbox.js";
+import type { Arm, VerifierSpec } from "./core/types.js";
+import { notReadyReason } from "./core/setup.js";
+import { sandboxCmd } from "./cli/sandbox.js";
+import { hasCommits, isGitRepo } from "./core/git.js";
 import { readRoster } from "./core/roster.js";
 import { findAgent } from "./core/roster.js";
 import { orgExists, projectRoot } from "./core/paths.js";
+import { missionCheckCmd, verifyCmd } from "./cli/verify.js";
 import { workdirFor } from "./core/runner.js";
 import {
   addTask,
@@ -116,7 +130,7 @@ function statusLine(cwd: string): string {
 }
 
 /** Run the dashboard in this terminal, inheriting stdio. `view` opens it on the chat. */
-function runUi(cwd: string, view?: "chat"): void {
+function runUi(cwd: string, view?: "chat" | "sky"): void {
   const child = spawn(process.execPath, [TUI_ENTRY], {
     cwd,
     stdio: "inherit",
@@ -303,19 +317,43 @@ function taskCmd(args: string[], cwd: string): void {
     }
     case "add": {
       // `-` means unassigned. Priority via a leading `!` for high or `.` for low.
-      const [who, ...words] = rest;
+      // --verify "<check>" adds a verifier, repeatable. --samples n runs n attempts.
+      // --arm provider[:model] names an arm, repeatable.
+      const verifiers: VerifierSpec[] = [];
+      const arms: Arm[] = [];
+      let samples = 1;
+      let sandbox: string | null = null;
+      const plain: string[] = [];
+      for (let i = 0; i < rest.length; i++) {
+        const a = rest[i];
+        if (a === "--verify" && rest[i + 1]) verifiers.push(parseVerifier(rest[++i]));
+        else if (a === "--sandbox" && rest[i + 1]) sandbox = rest[++i];
+        else if (a === "--samples" && rest[i + 1]) samples = Math.max(1, Math.floor(Number(rest[++i])) || 1);
+        else if (a === "--arm" && rest[i + 1]) {
+          const [p, m] = rest[++i].split(":");
+          if (!PROVIDERS.includes(p as Provider)) {
+            process.stderr.write(`--arm takes provider[:model], with provider one of ${PROVIDERS.join(", ")}.\n`);
+            process.exitCode = 1;
+            return;
+          }
+          arms.push({ provider: p as Provider, model: m || providerFor(p as Provider).defaultModel() });
+        } else plain.push(a);
+      }
+      const [who, ...words] = plain;
       let priority: TaskPriority = "normal";
       if (words[0] === "!") { priority = "high"; words.shift(); }
       if (words[0] === ".") { priority = "low"; words.shift(); }
       const title = words.join(" ");
       if (!who || !title) {
-        process.stderr.write("Usage: ceo task add <agent|-> [!|.] <title…>\n");
+        process.stderr.write("Usage: ceo task add <agent|-> [!|.] <title…> [--verify <check>]… [--samples n] [--arm provider[:model]]…\n");
         process.exitCode = 1;
         return;
       }
       try {
-        const t = addTask({ title, assignee: who === "-" ? null : who, priority }, cwd);
-        process.stdout.write(`Queued ${t.id} for ${t.assignee ?? "nobody yet"}: ${t.title}\n`);
+        if (sandbox && !isSandboxKind(sandbox)) throw new Error("--sandbox takes local, docker or ssh.");
+        const t = addTask({ title, assignee: who === "-" ? null : who, priority, verifiers, samples: Math.max(samples, arms.length || 1), arms, sandbox: sandbox && isSandboxKind(sandbox) ? sandbox : null }, cwd);
+        const extra = [t.samples > 1 ? `${t.samples} attempts` : "", t.verifiers.length > 0 ? `${t.verifiers.length} check${t.verifiers.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");
+        process.stdout.write(`Queued ${t.id} for ${t.assignee ?? "nobody yet"}: ${t.title}${extra ? ` (${extra})` : ""}\n`);
       } catch (e) {
         process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
         process.exitCode = 1;
@@ -517,13 +555,20 @@ function traceCmd(args: string[], cwd: string): void {
 }
 
 /**
- * `ceo company [id] [--worktrees writers|all|none]`: hire a whole company,
+ * `ceo company [id] [--worktrees writers|all|none] [--size n]`: hire a whole company,
  * or list the companies when no id is given.
  */
 function companyCmd(args: string[], cwd: string): void {
   const id = args.find((a) => !a.startsWith("--"));
   const wIdx = args.indexOf("--worktrees");
   const mode = wIdx >= 0 ? args[wIdx + 1] : undefined;
+  const sIdx = args.indexOf("--size");
+  const size = sIdx >= 0 ? Number(args[sIdx + 1]) : 1;
+  if (!Number.isFinite(size) || size < 1) {
+    process.stderr.write("--size takes a whole number of agents per seat, 1 or more.\n");
+    process.exitCode = 1;
+    return;
+  }
   if (!id) {
     const rows = COMPANIES.map((c) => {
       const plan = planCompany(c, cwd);
@@ -544,7 +589,7 @@ function companyCmd(args: string[], cwd: string): void {
     return;
   }
   if (!orgExists(cwd)) initLedger(cwd);
-  const plan = planCompany(template, cwd, mode ? { worktrees: mode as WorktreeMode } : {});
+  const plan = planCompany(template, cwd, { ...(mode ? { worktrees: mode as WorktreeMode } : {}), scale: size });
   const result = hireCompany(plan, cwd);
   const lines = [`Hired the ${template.title.toLowerCase()}: ${describeHire(result, plan)}, in ${(result.ms / 1000).toFixed(1)}s.`];
   for (const s of plan.seats) {
@@ -555,6 +600,55 @@ function companyCmd(args: string[], cwd: string): void {
   if (result.skipped.length > 0) lines.push(`Kept ${result.skipped.join(", ")}, already in the org.`);
   if (result.failed.length > 0) lines.push(`Not hired: ${result.failed.join("; ")}.`);
   if (result.chief && result.hired.length > 0) lines.push(`Next: ceo chat, and tell ${result.chief} what to build.`);
+  process.stdout.write(lines.join("\n") + "\n");
+  if (result.failed.length > 0) process.exitCode = 1;
+}
+
+/**
+ * `ceo swarm <name> <n>`: hire n copies of one agent, dealt across providers.
+ *   --brief "..."              what each member does; default a general fixer brief
+ *   --providers claude,codex   the providers to deal across; default every ready one
+ *   --budget 2                 each member's budget in dollars; default 2
+ *   --level execute            observe, propose, execute or autonomous; default execute
+ *   --task "..."               queue this task for every member
+ */
+function swarmCmd(args: string[], cwd: string): void {
+  const opt = (name: string): string | undefined => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const flagged = new Set(["--brief", "--providers", "--budget", "--level", "--task"].flatMap((f) => {
+    const i = args.indexOf(f);
+    return i >= 0 ? [i, i + 1] : [];
+  }));
+  const [name, countRaw] = args.filter((_, i) => !flagged.has(i));
+  const count = Number(countRaw);
+  const fail = (m: string) => {
+    process.stderr.write(`${m}\n`);
+    process.exitCode = 1;
+  };
+  if (!name || !Number.isFinite(count) || count < 1) return fail("ceo swarm <name> <n> [--brief ...] [--providers claude,codex,gemini] [--budget 2] [--level execute] [--task ...]");
+  const asked = opt("providers")?.split(",").map((p) => p.trim()).filter(Boolean) ?? [];
+  const bad = asked.filter((p) => !PROVIDERS.includes(p as Provider));
+  if (bad.length > 0) return fail(`Unknown provider ${bad.join(", ")}. One of: ${PROVIDERS.join(", ")}.`);
+  const ready = PROVIDERS.filter((p) => process.env.CEO_SKIP_SETUP_CHECK || !notReadyReason(p));
+  const providers = (asked.length > 0 ? asked : ready.length > 0 ? ready : ["claude"]) as Provider[];
+  const level = (opt("level") ?? "execute") as AutonomyLevel;
+  if (!AUTONOMY_LEVELS.includes(level)) return fail(`--level takes ${AUTONOMY_LEVELS.join(", ")}.`);
+  const budget = Number(opt("budget") ?? 2);
+  if (!Number.isFinite(budget) || budget <= 0) return fail("--budget takes dollars per member, such as 2.");
+  const brief = opt("brief") ?? `A ${name}. Take one piece of the work, finish it with the smallest correct change, and report what changed and how it was checked.`;
+
+  if (!orgExists(cwd)) initLedger(cwd);
+  const started = Date.now();
+  const result = hireSwarm({ name, count: Math.floor(count), brief, providers, budgetUsd: budget, autonomy: level, isolated: level === "execute" || level === "autonomous" ? isGitRepo(cwd) && hasCommits(cwd) : false }, cwd);
+  const lines = [`Hired ${result.hired.length} ${name} agents in ${((Date.now() - started) / 1000).toFixed(1)}s: ${describeSpread(result.hired.map((a) => a.provider))}, ${compactBudget(budget)} each.`];
+  const task = opt("task");
+  if (task) {
+    for (const a of result.hired) addTask({ title: task, assignee: a.name }, cwd);
+    lines.push(`Queued "${task}" for each. R in the dashboard dispatches, A keeps dispatching.`);
+  }
+  if (result.failed.length > 0) lines.push(`Not hired: ${result.failed.slice(0, 5).join("; ")}${result.failed.length > 5 ? ` and ${result.failed.length - 5} more` : ""}.`);
   process.stdout.write(lines.join("\n") + "\n");
   if (result.failed.length > 0) process.exitCode = 1;
 }
@@ -612,6 +706,11 @@ async function docketCmd(args: string[], cwd: string): Promise<void> {
 /** `ceo skills`: the catalogue, from Reflex and the CLIs' skill folders. `ceo skills give <name> <agent>`. */
 async function skillsCmd(args: string[], cwd: string): Promise<void> {
   const [verb, name, agent] = args;
+  if (verb === "sync") {
+    const added = await syncReflexSkills(cwd);
+    process.stdout.write(added.length > 0 ? `Added ${added.length} Reflex skill${added.length === 1 ? "" : "s"} to the docket: ${added.join(", ")}. The router can now try each as an arm.\n` : "Every Reflex skill is already in the docket.\n");
+    return;
+  }
   if (verb === "give") {
     if (!name || !agent) {
       process.stderr.write("Usage: ceo skills give <name> <agent>\n");
@@ -716,7 +815,7 @@ async function hfCmd(args: string[]): Promise<void> {
  *   ceo alerts                       the channels and events
  *   ceo alerts bell|desktop on|off
  *   ceo alerts slack <url>|off       ceo alerts webhook <url>|off
- *   ceo alerts <event> on|off        done, failed, budget, denied, chief, queue
+ *   ceo alerts <event> on|off        done, failed, budget, denied, chief, queue, limit
  *   ceo alerts test
  */
 async function alertsCmd(args: string[], cwd: string): Promise<void> {
@@ -830,6 +929,12 @@ async function main(): Promise<void> {
       runUi(cwd, "chat");
       return;
 
+    case "sky":
+    case "constellation":
+      ensureCurrentWorkspace(cwd);
+      runUi(cwd, "sky");
+      return;
+
     case "open": {
       const how = openBeside(cwd);
       if (how) {
@@ -854,6 +959,10 @@ async function main(): Promise<void> {
       setupCmd(rest);
       return;
 
+    case "sandbox":
+      sandboxCmd(rest, cwd);
+      return;
+
     case "board":
       boardCmd(rest, cwd);
       return;
@@ -866,6 +975,14 @@ async function main(): Promise<void> {
       companyCmd(rest, cwd);
       return;
 
+    case "swarm":
+      swarmCmd(rest, cwd);
+      return;
+
+    case "run":
+      await runCmd(rest, cwd);
+      return;
+
     case "docket":
     case "context":
       await docketCmd(rest, cwd);
@@ -873,6 +990,10 @@ async function main(): Promise<void> {
 
     case "skills":
       await skillsCmd(rest, cwd);
+      return;
+
+    case "router":
+      routerCmd(rest, cwd);
       return;
 
     case "github":
@@ -891,6 +1012,10 @@ async function main(): Promise<void> {
 
     case "alerts":
       await alertsCmd(rest, cwd);
+      return;
+
+    case "approvals":
+      approvalsCmd(rest, cwd);
       return;
 
     case "runs":
@@ -964,6 +1089,18 @@ async function main(): Promise<void> {
       taskCmd(rest, cwd);
       return;
 
+    case "outcomes":
+      outcomesCmd(rest, cwd);
+      return;
+
+    case "verify":
+      await verifyCmd(rest, cwd);
+      return;
+
+    case "mission":
+      await missionCheckCmd(rest, cwd);
+      return;
+
     case "whoami":
     case "billing": {
       const st = authStatus();
@@ -999,7 +1136,10 @@ async function main(): Promise<void> {
           "  ceo                    attach to the dashboard in tmux session `ceo`, or run it here",
           "  ceo ui                 run the dashboard in this terminal without tmux",
           "  ceo chat               talk to the chief of staff, who hires and gives out work",
-          "  ceo company [id]       hire a whole company in one step; no id lists them; --worktrees writers|all|none",
+          "  ceo sky                the constellation: every agent as a star around the chief of staff, notes in flight",
+          "  ceo company [id]       hire a whole company in one step; no id lists them; --worktrees writers|all|none, --size n",
+          "  ceo swarm <name> <n>   hire n copies of one agent across providers; --brief, --providers, --budget, --level, --task",
+          "  ceo run <task>         run a task now as attempts, verify each, keep the winner; --samples n",
           "  ceo docket [add|give|take|rm|refresh]   the context each agent is given",
           "  ceo skills [give <name> <agent>]        skills from Reflex and the CLIs' skill folders",
           "  ceo github · ceo pr <agent>             issues here; a pull request for an agent's branch",
@@ -1012,6 +1152,9 @@ async function main(): Promise<void> {
           "  ceo --version          print the version",
           "  ceo workspace ls|add <path> [name]|rm <path|name>",
           "  ceo task ls|add <agent|-> [!|.] <title>|<id> done|cancel|queue|assign <agent>",
+          "  ceo verify <spec> [--in <dir>]   run one check: a command, everval:<file>#<scenario> or judge:<rubric>",
+          "  ceo mission checks [add <spec>]   list or add the mission's checks",
+          "  ceo mission check      run every check; exit 1 unless the mission is met",
           "  ceo agent <name> provider <p> [model]   move an agent to another provider; brief, budget, history stay",
           "  ceo board [n]          notes posted by agents and the operator",
           "  ceo runs               who is working right now, from the live traces",

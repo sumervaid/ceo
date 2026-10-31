@@ -26,6 +26,13 @@ each event.
   on request.
 - **[A chief of staff to talk to.](#chat-with-the-chief-of-staff)** A typed
   request becomes hires and delegations that start when the reply ends.
+- **[Swarms, with limits that pause.](#swarms-and-limits)** Twelve agents or
+  two hundred, dealt across providers. A provider limit puts the task back
+  in the queue.
+- **[A sky of agents.](#the-constellation)** The chief is a black hole. Every
+  agent is a star. Every note is a comet.
+- **[Evidence, not trust.](#evidence-not-trust)** A task runs as attempts
+  across providers. Checks decide which attempt lands.
 - **[Three providers, one team, live.](#three-providers-one-team-live)**
   A codex agent hands a fix to a gemini reviewer and reads the review on
   the next turn.
@@ -79,8 +86,9 @@ studio, a research lab and a full company. Each mixes providers, and each
 comes with a chief of staff. The picker shows every seat before the hire:
 provider, model, level, budget and worktree, then the total of the budgets. `w`
 gives every writer a git worktree and a private branch, every agent one,
-or nobody. `+` opens the picker any time. `ceo company <id>` does the same
-from the terminal. See [companies](docs/companies.md).
+or nobody. `←` `→` set the team size: at 8, each seat becomes eight agents.
+`+` opens the picker any time. `ceo company <id>` does the same from the
+terminal, with `--size n` for the team size. See [companies](docs/companies.md).
 
 ## Chat with the chief of staff
 
@@ -95,8 +103,8 @@ the first visit. Each message is a run, resumed on the same CLI session as
 the last.
 
 - **The chief staffs the request.** Each piece goes to the teammate best
-  placed for the piece. A new hire on any provider covers a gap, at most
-  three per reply.
+  placed for the piece. A new hire on any provider covers a gap. One request
+  may hire a swarm.
 - **Named providers stick.** "Put the fix on codex and the review on
   gemini" runs each task on the provider named. The agent's own setting
   stays for the next task.
@@ -167,6 +175,108 @@ a run of the agent's own choosing, change a budget or a level, or settle a
 cost. `ceo board`, `ceo runs` and `ceo trace <agent>` show the same
 exchange from the terminal. See [collaboration](docs/collaboration.md).
 
+## The constellation
+
+<p align="center">
+  <img src="docs/sky.gif" alt="The constellation: a black hole with a swirling disk for the chief of staff; twelve agents on claude, codex and gemini born at the horizon, spiralling in to work and trading notes as comets" width="900">
+</p>
+
+`O` on the dashboard, or `ceo sky`, draws the org as a sky. The chief of
+staff is a black hole at the centre. An accretion disk swirls around the
+horizon, faster as more agents work. Every other agent is a star in the
+colour of the agent's provider.
+
+- **A working agent spirals in and twinkles.** A waiting agent shows `◌`. A
+  finished agent shows `✧`. A failed agent shows `✕`. An idle agent drifts
+  on an outer ring.
+- **A note is a comet.** The comet leaves the sender and bends around the
+  hole on the way to the receiver. A note to everyone is a ripple.
+- **Lines join agents that traded notes.** The constellation therefore shows
+  who works with whom.
+- **A new agent is born at the horizon.** The agent drifts out to an orbit.
+- **A crowded sky drops names and keeps stars.** Hundreds of agents fit.
+
+`←` `→` select a star. `enter` opens the agent. `L` switches to the cards.
+`C` opens the chat. See [the constellation](docs/sky.md).
+
+## Swarms and limits
+
+A swarm is many copies of one agent, hired in one step, dealt across
+providers. Three ways make one:
+
+```
++  then ← →                    the company picker's team size: each seat becomes n agents
+ceo swarm fixer 12             twelve agents named fixer-01 to fixer-12, four on each ready provider
+"hire twelve fixers across claude, codex and gemini"    a sentence to the chief of staff
+```
+
+CEO caps neither the size of the org nor the count of agents running at
+once. The ceilings belong to the providers and the machine. A Claude or
+ChatGPT plan has a rolling usage window and a weekly cap, shared by every
+session on the account. An API key has limits per minute. Each agent is a
+node process and an MCP server, a few hundred megabytes together.
+
+A run refused for a rate or usage limit is not a failure. The task goes back
+to the queue. The provider waits until the stated reset. With no stated
+reset, the provider backs off for 1, 2, 4 minutes and so on up to 30. The dashboard dispatches again when the
+limit lifts. The run shows `waiting`. The `limit` alert fires.
+`CEO_MAX_RUNNING=8` sets a ceiling on runs at once, for a machine or a plan
+with little room. `CEO_CHIEF_MAX_HIRES` sets a ceiling on hires per chief
+reply. See [swarms and limits](docs/swarms.md).
+
+## Evidence, not trust
+
+A task can carry checks. A task with checks, or with several attempts, runs
+as attempts. Each attempt is the assignee on one arm, in a separate
+worktree. An arm is a provider and a model. The attempts run at the same time.
+Each finished attempt is then verified.
+
+A check is a shell command, an Everval collection or a vote of judges.
+Judges are agents at observe on other providers. A check that cannot run is
+an error. An error is never a pass. The passing attempt with the best score
+is promoted. A task with checks reaches done only through a promotion. One
+dissent is kept beside the winner: the best attempt from another arm.
+
+```
+ceo task add coder "Fix the flaky retry test" --verify "npm test" --verify "judge:the change is minimal" --samples 3
+ceo run <task>                          three attempts, each verified, one promoted
+ceo approvals                           what waits for a decision, with the evidence
+ceo router pick "Fix the crash in login" -n 3    the arms the evidence favours
+ceo outcomes                            verified results, and dollars per verified result
+```
+
+<p align="center">
+  <img src="docs/evidence.gif" alt="A task with a check runs as three attempts on claude, codex and gemini. One attempt passes the check and wins. The merge request waits in the approvals list with the evidence." width="900">
+</p>
+
+Gates decide which actions land. A merge lands alone only when four
+conditions hold. The attempt passed. A deterministic check passed. Every
+judge agreed. The org setting allows auto-merge. The setting is off by
+default. A push, a pull request, a release, a message to a person and a
+payment always wait for a person. `V` opens the requests with the evidence
+behind each.
+
+Every verdict feeds the router. The router keeps a record of passes per arm
+for each kind of work. Thompson sampling draws the next arms from that
+record. Strong arms win most draws. Arms with thin records still get tries.
+The chief of staff reads the same record through `org_router`.
+
+Outcomes are the budget unit. The status bar shows `N verified · $X/verified`.
+A workspace can cap attempts and set a verified target. A workspace with a
+lower cost per verified outcome gets more dispatch slots. Agent budgets
+still cap dollars.
+
+`CEO_SANDBOX=docker` runs each turn in a container that is discarded when the
+process exits. Autonomy is still enforced by the agent's own process.
+
+The loop closes outside CEO. Reflex is getting a CEO source adapter. The
+adapter reads `.ceo/runs` and treats `verify` events as reward. A new Reflex
+skill then becomes an arm that the router can try. Reflex reads CEO's runs
+and verdicts. Everval grades the collection that a check names. See
+[verification](docs/verification.md), [judges and gates](docs/gates.md),
+[the router](docs/router.md), [outcomes](docs/outcomes.md) and
+[sandboxes](docs/sandboxes.md).
+
 ## The docket
 
 <p align="center">
@@ -213,7 +323,7 @@ GitHub goes through the `gh` login. Hugging Face reads the token that
   private repos.
 - **Alerts where the developer is.** A failed run, a refusal at a budget,
   an agent reaching past the agent's level, a reply from the chief, an empty
-  queue. The bell, the desktop, Slack or any webhook. `t` sends a test.
+  queue, a provider limit. The bell, the desktop, Slack or any webhook. `t` sends a test.
 
 See [integrations](docs/integrations.md).
 
@@ -250,9 +360,11 @@ n  +         start an org; start a company
 D  I         the docket; integrations: GitHub, Hugging Face, alerts, skills
 C            chat with the chief of staff
 L            the live view: every agent by provider, and the exchanges between agents
+O            the constellation: every agent a star around the chief of staff, every note a comet
 p  h         a suggested team; hire by hand
-t  d         queue a task; delegate now
+t  d         queue a task, with checks and attempts; delegate now
 R  A         dispatch every idle agent; auto-dispatch across every workspace
+V            approvals: merges and outward actions waiting on a decision
 v  i         move the selected agent to another provider; give the agent a worktree
 b  y  m      budget; level; merge the agent's branch
 P            push the agent's branch and open a pull request
@@ -321,12 +433,21 @@ ceo setup [provider]   are claude, codex and gemini installed and signed in; run
 ceo suggest            propose a team; --hire, --json, --everywhere, --days N, --scan
 ceo chat               the dashboard, opened on the chat with the chief of staff
 ceo runs · ceo board   who is working now, and every note between agents
-ceo company [id]       hire a whole company; no id lists the companies; --worktrees writers|all|none
+ceo sky                the constellation, opened on the dashboard
+ceo company [id]       hire a whole company; no id lists the companies; --worktrees writers|all|none, --size n
+ceo swarm <name> <n>   n copies of one agent across providers; --brief, --providers, --budget, --level, --task
 ceo docket · ceo skills   the context and skills each agent is given
 ceo github · ceo pr <agent> · ceo hf <repo>   issues, pull requests, Hub cards
 ceo alerts [test]      where alerts go: the bell, the desktop, Slack, a webhook
 ceo agent <name> provider <p> [model]   move an agent to another provider
 ceo task add coder ! fix the flaky test   queue (! high, . low); ceo task ls; ceo task <id> done
+ceo task add <agent> <title> --verify "<check>" --samples n --arm provider[:model] --sandbox docker
+ceo run <task> [--samples n]   run a task now as attempts, verify each, keep the winner
+ceo verify <check> · ceo mission [checks|check]   one check now; the mission's checks
+ceo approvals [approve|deny <id>|auto-merge on|off]   the requests that wait for a decision
+ceo router [kind] · ceo router pick "<title>"   which arm wins a kind of work
+ceo outcomes [--all] [budget …]   verified results and dollars per verified result
+ceo sandbox [test]     where runs execute and whether the sandbox can start
 ceo post <agent|*> <text>   a note; ceo board shows the board
 ceo trace <agent>      what one agent is doing, line by line
 ceo workspace add <path>   the sidebar's list of directories
@@ -369,7 +490,9 @@ links the plugin. Nothing above needs the plugin. Audits, through
 
 The [docs](docs/README.md) folder is the wiki: [getting started](docs/getting-started.md),
 [setup](docs/setup.md), [concepts](docs/concepts.md), [companies](docs/companies.md), [chat](docs/chat.md), [collaboration and the live view](docs/collaboration.md),
-[the docket](docs/docket.md), [integrations](docs/integrations.md),
+[the constellation](docs/sky.md), [swarms and limits](docs/swarms.md),
+[verification](docs/verification.md), [judges and gates](docs/gates.md), [the router](docs/router.md),
+[outcomes](docs/outcomes.md), [sandboxes](docs/sandboxes.md), [the docket](docs/docket.md), [integrations](docs/integrations.md),
 [providers](docs/providers.md), [autonomy](docs/autonomy.md), [the queue](docs/queue.md),
 [the ledger](docs/ledger.md), [money](docs/money.md), [keys](docs/keys.md),
 [command line](docs/cli.md), [the suggested team](docs/suggest.md), [testing](docs/testing.md),

@@ -12,6 +12,8 @@ const delay = Number(process.env.STUB_DELAY_MS ?? 300);
 const args = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+// STUB_VERDICT=pass|fail ends the final text with a judge's verdict. STUB_VERDICT_GEMINI overrides it for this provider.
+const verdict = (who) => { const v = process.env[`STUB_VERDICT_${who}`] ?? process.env.STUB_VERDICT; return v ? `\nVERDICT: ${v}\nREASON: stub` : ""; };
 const flag = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
 if (args.includes("--version")) { process.stdout.write((process.env.STUB_GEMINI_VERSION ?? "0.0.0 (stub-gemini)") + "\n"); process.exit(0); }
 if (args[0] === "models") {
@@ -55,7 +57,7 @@ const task = prompt.includes("The task:") ? prompt.split("The task:").pop().trim
   played.close();
   if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
   await sleep(delay);
-  out({ event: "result", result: { conversation_id: flag("--conversation") ?? "stub-conv-" + process.pid, status: "SUCCESS", response: played.done ?? `Done: ${task.slice(0, 60)}`, duration_seconds: 1.2, num_turns: turns,
+  out({ event: "result", result: { conversation_id: flag("--conversation") ?? "stub-conv-" + process.pid, status: "SUCCESS", response: (played.done ?? `Done: ${task.slice(0, 60)}`) + verdict("GEMINI"), duration_seconds: 1.2, num_turns: turns,
     usage: { input_tokens: turns * 1000, output_tokens: turns * 50, thinking_tokens: turns * 20, cache_read_tokens: turns * 200, total_tokens: turns * 1270 } } });
   process.exit(Number(process.env.STUB_EXIT ?? 0));
 })();

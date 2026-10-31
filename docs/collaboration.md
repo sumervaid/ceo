@@ -137,13 +137,14 @@ agent defers to and the work the agent hands off. The tools are the means.
 
 ## The chief of staff
 
-One agent holds eight more tools. That agent is the chief of staff, the
+One agent holds nine more tools. That agent is the chief of staff, the
 agent the [chat](chat.md) talks to. Five tools staff the org:
 `org_providers`, `org_hire`, `org_budget`, `org_delegate` and `org_fire`.
 Three tools work the docket: `org_docket`, `org_context` and `org_give`.
-The chief's level decides which of the eight the chief may use. The org
-server checks the level, the allowance and the per-reply limit on every
-call. No other agent's server registers the eight tools.
+One tool reads the router's evidence: `org_router`. The chief's level
+decides which of the nine the chief may use. The org server checks the
+level, the allowance and the per-reply limit on every call. No other
+agent's server registers the nine tools.
 
 ## What this is not
 

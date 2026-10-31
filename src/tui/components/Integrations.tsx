@@ -92,7 +92,7 @@ export function Integrations(p: IntegrationsProps) {
     }
     if (input === "t") return p.onTestAlert();
     if (input === "k") return p.onSkills();
-    if (/^[1-6]$/.test(input)) {
+    if (/^[1-7]$/.test(input)) {
       const kind = ALERT_KINDS[Number(input) - 1];
       return p.onAlerts({ events: { [kind]: !p.alerts.events[kind] } });
     }

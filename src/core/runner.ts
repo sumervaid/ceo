@@ -52,10 +52,21 @@ import { estimateCostUsd } from "./pricing.js";
 import { chiefDir, projectRoot } from "./paths.js";
 import { staffingFor } from "./chat.js";
 import { contextFor, type ResolvedContext } from "./context.js";
+import { cooldowns, detectRateLimit, noteRateLimit } from "./limits.js";
 import { newParseState, providerFor, type CollabServer, type ParseState, type ProviderSpec, type RunPlan } from "./providers.js";
 import { notReadyReason } from "./setup.js";
+import {
+  describeSandboxSpawnError,
+  sandboxFor,
+  sandboxHooks,
+  sandboxInfo,
+  sandboxReadiness,
+  sandboxStubViolation,
+  wrapPlan,
+  type SandboxKind,
+} from "./sandbox.js";
 import { findTask, updateTask } from "./tasks.js";
-import type { AgentRecord, Provider } from "./types.js";
+import type { AgentRecord, Arm, Provider } from "./types.js";
 
 export type RunEvent =
   | {
@@ -77,7 +88,8 @@ export type RunEvent =
   /** A follow-up turn began: the session was resumed with what teammates posted. */
   | { type: "turn"; n: number; reason: string }
   | { type: "done"; costUsd: number; costIsEstimate: boolean; inputTokens: number; outputTokens: number; durationMs: number; text: string; turns: number }
-  | { type: "failed"; error: string };
+  /** `retryAt` is set when a provider limit refused the run. The task went back to the queue. */
+  | { type: "failed"; error: string; retryAt?: number };
 
 export type RunHandle = {
   /** Kill the underlying process and stop any further turns. */
@@ -109,6 +121,8 @@ export type RunResult = {
   delegationId: string | null;
   /** The CLI session, so a later run can resume the conversation. */
   sessionId: string | null;
+  /** Set when a provider's rate or usage limit refused the run. The task went back to the queue. */
+  rateLimit?: { provider: Provider; retryAt: number; reason: string } | null;
 };
 
 const COLLAB_ENTRY = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "mcp", "collab-index.js");
@@ -223,6 +237,8 @@ function runTurn(
   spec: ProviderSpec,
   onEvent: (e: RunEvent) => void,
   register: (proc: ChildProcess | null) => void,
+  /** Words for a launcher that cannot start. Defaults to the provider's install hint. */
+  describe: (binary: string, e: NodeJS.ErrnoException) => string = (binary, e) => describeSpawnError(spec, binary, e),
 ): Promise<TurnOutcome> {
   return new Promise<TurnOutcome>((resolve) => {
     const st = newParseState();
@@ -233,7 +249,7 @@ function runTurn(
         stdio: [plan.stdin === null ? "ignore" : "pipe", "pipe", "pipe"],
       });
     } catch (e) {
-      resolve({ state: st, code: null, stderr: "", spawnError: describeSpawnError(spec, plan.binary, e as NodeJS.ErrnoException), cancelled: false });
+      resolve({ state: st, code: null, stderr: "", spawnError: describe(plan.binary, e as NodeJS.ErrnoException), cancelled: false });
       return;
     }
     register(proc);
@@ -268,7 +284,7 @@ function runTurn(
     });
     proc.stderr?.on("data", (c: Buffer) => (stderr += c.toString()));
     proc.on("error", (e: NodeJS.ErrnoException) => {
-      spawnError = describeSpawnError(spec, plan.binary, e);
+      spawnError = describe(plan.binary, e);
     });
     proc.once("exit", (_code, signal) => {
       if (signal === "SIGTERM" || signal === "SIGKILL") cancelled = true;
@@ -322,6 +338,17 @@ export function runDelegation(
      * A queue task that names a provider applies it without this option.
      */
     provider?: Provider | null;
+    /**
+     * One attempt of a sampled task: run on this arm, in this worktree. The
+     * attempt orchestrator owns the task's status, so the run leaves the
+     * task alone. See `attempts.ts`.
+     */
+    attempt?: { id: string; arm: Arm; workdir: string } | null;
+    /**
+     * Where the process runs, for this run only. Without it CEO_SANDBOX
+     * decides, and local is the default. See `sandbox.ts`.
+     */
+    sandbox?: SandboxKind | null;
   } = {},
 ): RunHandle {
   const cwd = opts.cwd;
@@ -330,10 +357,10 @@ export function runDelegation(
 
   /** Best-effort task bookkeeping: a task update must never break a run. */
   const settleTask = (
-    status: "running" | "done" | "failed" | "cancelled",
+    status: "running" | "done" | "failed" | "cancelled" | "queued",
     extra: { delegationId?: string; note?: string | null } = {},
   ) => {
-    if (!opts.taskId) return;
+    if (!opts.taskId || opts.attempt) return;
     try {
       updateTask(opts.taskId, { status, ...extra }, cwd);
     } catch {
@@ -359,8 +386,10 @@ export function runDelegation(
       override = null;
     }
   }
-  const agent: AgentRecord =
-    override && override !== found.provider
+  const arm = opts.attempt?.arm ?? null;
+  const agent: AgentRecord = arm
+    ? { ...found, provider: arm.provider, model: arm.model }
+    : override && override !== found.provider
       ? { ...found, provider: override, model: providerFor(override).defaultModel() }
       : found;
 
@@ -373,6 +402,13 @@ export function runDelegation(
     const error = `CEO_REQUIRE_STUBS is set and ${spec.id} would run ${spec.binary()}; refusing.`;
     userEmit({ type: "failed", error });
     return immediate(failedResult(error));
+  }
+
+  const sandbox = sandboxFor(opts);
+  const stubViolation = sandboxStubViolation(sandbox);
+  if (stubViolation) {
+    userEmit({ type: "failed", error: stubViolation });
+    return immediate(failedResult(stubViolation));
   }
 
   // Readiness before anything is written. A provider that is not installed
@@ -389,19 +425,33 @@ export function runDelegation(
     }
   }
 
+  // A sandbox that cannot start fails here, before a ledger entry exists.
+  if (sandbox !== "local" && !process.env.CEO_SKIP_SETUP_CHECK) {
+    const ready = sandboxReadiness(sandbox);
+    if (!ready.ready) {
+      const reason = `${sandbox} sandbox is not ready: ${ready.reason}`;
+      userEmit({ type: "failed", error: reason });
+      settleTask("failed", { note: reason });
+      return immediate(failedResult(reason));
+    }
+  }
+
   const root = projectRoot(cwd);
-  const workdir = workdirFor(agent, cwd);
+  const workdir = opts.attempt?.workdir ?? workdirFor(agent, cwd);
   const mission = currentMission(cwd);
 
   // The org's side of the prompt: notes for this agent and teammates'
   // latest outputs, plus the org tools when this run gets them.
-  const collabPossible = collabServerFor(agent, root, null, depth) !== null;
+  // A sandboxed process cannot reach the host ledger, so it gets no org tools.
+  const collabFor = (delegationId: string | null): CollabServer | null =>
+    sandbox === "local" ? collabServerFor(agent, root, delegationId, depth) : null;
+  const collabPossible = collabFor(null) !== null;
   const context = orgContext(agentName, cwd);
   // The docket, read now: files from the agent's own worktree, the rest
   // from the snapshots taken when each item was added.
   let docket: ResolvedContext[] = [];
   try {
-    docket = contextFor(agentName, cwd, workdir);
+    docket = contextFor(agentName, cwd, workdir, arm ? { ids: arm.context, skills: arm.skills } : {});
   } catch {
     docket = [];
   }
@@ -416,7 +466,7 @@ export function runDelegation(
           model: agent.model,
           autonomy: level,
           agentTools: agent.tools,
-          collab: collabServerFor(agent, root, delegationId, depth),
+          collab: collabFor(delegationId),
         })
       : spec.plan({
           task: firstPrompt,
@@ -424,7 +474,7 @@ export function runDelegation(
           model: agent.model,
           autonomy: level,
           agentTools: agent.tools,
-          collab: collabServerFor(agent, root, delegationId, depth),
+          collab: collabFor(delegationId),
         });
 
   // begin() runs the budget gate and throws when the agent is capped out.
@@ -443,6 +493,9 @@ export function runDelegation(
       ...(opts.via ? { via: opts.via } : {}),
       ...(docket.length > 0 ? { context: docket.map((d) => d.id) } : {}),
       ...(opts.resumeSessionId ? { resumed: opts.resumeSessionId } : {}),
+      ...(opts.attempt ? { attemptId: opts.attempt.id, arm: opts.attempt.arm } : {}),
+      ...(opts.taskId ? { taskId: opts.taskId } : {}),
+      ...(sandboxInfo(sandbox) ? { sandbox: sandboxInfo(sandbox) } : {}),
     });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
@@ -464,13 +517,16 @@ export function runDelegation(
     provider: spec.id,
     model: agent.model,
     taskId: opts.taskId ?? null,
+    attemptId: opts.attempt?.id ?? null,
+    arm: opts.attempt?.arm ?? null,
     parent: opts.parentDelegationId ?? null,
     depth,
+    ...(sandboxInfo(sandbox) ? { sandbox: sandboxInfo(sandbox) } : {}),
   }, cwd);
 
   // The final plan carries the delegation id, so notes the run posts name it.
   const plan = planFor(handle.id);
-  const collab = collabServerFor(agent, root, handle.id, depth);
+  const collab = collabFor(handle.id);
   if (!existsSync(workdir)) {
     try {
       mkdirSync(workdir, { recursive: true });
@@ -506,6 +562,10 @@ export function runDelegation(
     cwd: workdir,
   });
 
+  const sandboxCtx = { kind: sandbox, workdir, provider: spec.id, runId: handle.id, env: process.env };
+  const hooks = sandboxHooks(sandboxCtx);
+  const launch = (p: RunPlan): RunPlan => wrapPlan(p, sandboxCtx);
+
   let current: ChildProcess | null = null;
   let cancelRequested = false;
   const register = (p: ChildProcess | null) => {
@@ -528,12 +588,16 @@ export function runDelegation(
     let nextPlan: RunPlan = { ...plan, args: [...plan.args, ...(opts.extraArgs ?? [])] };
     let reason = "the task";
 
-    for (;;) {
+    // The ssh sandbox copies the worktree out once, before the first turn.
+    const setupError = await hooks.before();
+    if (setupError) error = setupError;
+
+    for (; !setupError;) {
       turns++;
       if (turns > 1) emit({ type: "turn", n: turns, reason });
       let streamed = "";
       const t = await runTurn(
-        nextPlan,
+        launch(nextPlan),
         workdir,
         spec,
         (e) => {
@@ -541,6 +605,7 @@ export function runDelegation(
           emit(e);
         },
         register,
+        sandbox === "local" ? undefined : (binary, e) => describeSandboxSpawnError(sandbox, binary, e),
       );
       const st = t.state;
       if (st.sessionId) sessionId = st.sessionId;
@@ -594,6 +659,10 @@ export function runDelegation(
       nextPlan = { ...nextPlan, args: [...nextPlan.args, ...(opts.extraArgs ?? [])] };
     }
 
+    // The copy back and the remote cleanup run whatever the turns did.
+    const teardownError = await hooks.after();
+    if (teardownError && !error) error = teardownError;
+
     const durationMs = Date.now() - started;
     let costUsd = settledCost ?? 0;
     let costIsEstimate = false;
@@ -605,6 +674,15 @@ export function runDelegation(
     const ok = error === null;
     return { ok, text, costUsd, inputTokens, outputTokens, durationMs, denials, error, costIsEstimate, turns, delegationId: handle.id, sessionId };
   })().then((result) => {
+    // A provider limit is not a failure of the work. The task goes back to
+    // the queue, and the provider waits until the limit is expected to lift.
+    const limit = !result.ok && result.error !== "cancelled" ? detectRateLimit(result.error) : null;
+    if (limit) {
+      const retryAt = noteRateLimit(cooldowns, spec.id, limit);
+      result = { ...result, rateLimit: { provider: spec.id, retryAt, reason: limit.reason } };
+    }
+    const outcome = result.ok ? "done" : result.error === "cancelled" ? "cancelled" : result.rateLimit ? "rate_limited" : "failed";
+
     // Close the ledger entry whatever happened. A cancelled or failed run
     // still cost money, and recording zero would understate the org's spend.
     end(
@@ -619,7 +697,7 @@ export function runDelegation(
         costBasis: result.costIsEstimate ? spec.estimateBasis : "settled",
         turns: result.turns,
         sessionId: result.sessionId,
-        outcome: result.ok ? "done" : result.error === "cancelled" ? "cancelled" : "failed",
+        outcome,
       },
       cwd,
     );
@@ -653,9 +731,19 @@ export function runDelegation(
       }, cwd);
     }
 
+    if (result.rateLimit) {
+      append("note", agentName, {
+        kind: "rate_limited",
+        provider: spec.id,
+        delegationId: handle.id,
+        retryAt: result.rateLimit.retryAt,
+        detail: result.rateLimit.reason,
+      }, cwd);
+    }
+
     settleTask(
-      result.ok ? "done" : result.error === "cancelled" ? "cancelled" : "failed",
-      { note: result.ok ? null : result.error },
+      result.ok ? "done" : result.error === "cancelled" ? "cancelled" : result.rateLimit ? "queued" : "failed",
+      { note: result.ok ? null : result.rateLimit ? `${spec.id} limit: back in the queue until ${new Date(result.rateLimit.retryAt).toLocaleTimeString()}` : result.error },
     );
 
     if (result.ok) {
@@ -670,7 +758,7 @@ export function runDelegation(
         turns: result.turns,
       });
     } else {
-      userEmit({ type: "failed", error: result.error ?? "unknown failure" });
+      userEmit({ type: "failed", error: result.error ?? "unknown failure", ...(result.rateLimit ? { retryAt: result.rateLimit.retryAt } : {}) });
     }
     return result;
   });
@@ -679,6 +767,7 @@ export function runDelegation(
     cancel: () => {
       cancelRequested = true;
       current?.kill("SIGTERM");
+      hooks.cancel();
     },
     finished,
   };

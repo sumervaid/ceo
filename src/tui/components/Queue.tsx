@@ -38,6 +38,8 @@ export function statusGlyph(status: TaskStatus, spinner: string): { glyph: strin
   switch (status) {
     case "running":
       return { glyph: spinner, color: "yellow" };
+    case "verifying":
+      return { glyph: "⚖", color: "magenta" };
     case "queued":
       return { glyph: "▸", color: "cyan" };
     case "blocked":
@@ -118,8 +120,12 @@ function Row({
   const mark = `${glyph} `;
   const who = `${(task.assignee ?? "nobody").slice(0, nameWidth).padEnd(nameWidth)} `;
   const prio = task.priority === "high" ? "!" : task.priority === "low" ? "." : " ";
+  // A task decided by evidence says so: ×3 attempts, ⚖ two checks, and
+  // the winning arm once one is promoted.
+  const evidence = `${task.samples > 1 ? ` ×${task.samples}` : ""}${task.verifiers.length > 0 ? ` ⚖${task.verifiers.length}` : ""}`;
+  const won = task.status === "done" && task.note?.startsWith("won by ") ? ` · ${task.note.slice(4).split(",")[0]}` : "";
   const tailText =
-    task.status === "blocked" && task.blockedReason
+    evidence + won + (task.status === "blocked" && task.blockedReason
       ? ` · ${task.blockedReason}`
       : task.costUsd !== null
         ? ` ${costUsd(task.costUsd)}`
@@ -127,7 +133,7 @@ function Row({
           ? ` · from ${task.requestedBy}${task.provider ? ` · on ${task.provider}` : ""}`
           : task.provider
             ? ` · on ${task.provider}`
-            : "";
+            : "");
 
   const fixed = head.length + mark.length + who.length + 1;
   const room = Math.max(4, width - fixed);

@@ -115,3 +115,51 @@ export function effectiveTools(
 export function writeWasPermitted(level: AutonomyLevel): boolean {
   return policyFor(level).canWrite;
 }
+
+/**
+ * Action classes: what an action does once the process has finished.
+ *
+ * The levels above are process controls. Each one bounds what an agent's
+ * child process can read, run and write. That bound stays whatever the
+ * gates decide. A gate cannot widen a process.
+ *
+ * Gates decide which actions land. Gates are keyed on the action and the
+ * evidence behind the action, never on the agent's seat. An agent at autonomous
+ * gets no shortcut past a gate, and an agent at execute gets no extra
+ * request. See `gates.ts`.
+ *
+ *   merge     internal. Lands a winner's branch in the base branch.
+ *   push      outward and irreversible. Sends commits to a remote.
+ *   pr        outward and irreversible. Opens a pull request.
+ *   publish   outward and irreversible. Releases a package or a page.
+ *   send      outward and irreversible. Sends a message to a person.
+ *   pay       outward and irreversible. Moves money.
+ *
+ * `evidence` means the action may land without a request when the
+ * evidence clears the rule and the org setting allows auto-merge. `always` means
+ * every instance becomes an approval request.
+ */
+export type ActionClass = "merge" | "push" | "pr" | "publish" | "send" | "pay";
+
+export const ACTION_CLASSES: ActionClass[] = ["merge", "push", "pr", "publish", "send", "pay"];
+
+export type ActionPolicy = {
+  action: ActionClass;
+  label: string;
+  /** True when the effect leaves the project and cannot be recalled. */
+  outward: boolean;
+  gate: "evidence" | "always";
+};
+
+export const ACTIONS: Record<ActionClass, ActionPolicy> = {
+  merge: { action: "merge", label: "merge a winning branch into the base branch", outward: false, gate: "evidence" },
+  push: { action: "push", label: "push commits to a remote", outward: true, gate: "always" },
+  pr: { action: "pr", label: "open a pull request", outward: true, gate: "always" },
+  publish: { action: "publish", label: "publish a package or a page", outward: true, gate: "always" },
+  send: { action: "send", label: "send a message to a person", outward: true, gate: "always" },
+  pay: { action: "pay", label: "make a payment", outward: true, gate: "always" },
+};
+
+export function isActionClass(s: string): s is ActionClass {
+  return (ACTION_CLASSES as string[]).includes(s);
+}

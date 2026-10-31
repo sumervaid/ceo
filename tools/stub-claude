@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stub `claude` for $0 testing. Emits the stream-json line protocol.
-// Env: STUB_TURNS, default 3. STUB_DELAY_MS, default 300. STUB_NO_RESULT=1 never settles. STUB_DENY=Write emits a denial. STUB_EXIT sets the exit code.
+// Env: STUB_TURNS, default 3. STUB_DELAY_MS, default 300. STUB_NO_RESULT=1 never settles. STUB_DENY=Write emits a denial. STUB_EXIT sets the exit code. STUB_ERROR=text ends the run with that error.
 // STUB_CHAT=<file.json> scripts a chief of staff: [{ "match": "words", "calls": [{ "tool": "org_hire", "args": {} }], "reply": "text" }].
 // The first entry whose match appears in the prompt runs. Its calls go to the real org MCP server named by --mcp-config, over stdio.
 // STUB_SCRIPT plays org calls during an ordinary run. See tools/stub-org.mjs.
@@ -14,6 +14,8 @@ const task = args[args.indexOf("-p") + 1] ?? "";
 const session = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : "stub-session-" + process.pid;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+// STUB_VERDICT=pass|fail ends the final text with a judge's verdict. STUB_VERDICT_CLAUDE overrides it for this provider.
+const verdict = (who) => { const v = process.env[`STUB_VERDICT_${who}`] ?? process.env.STUB_VERDICT; return v ? `\nVERDICT: ${v}\nREASON: stub` : ""; };
 
 function script() {
   if (!process.env.STUB_CHAT) return null;
@@ -70,8 +72,12 @@ function script() {
   played.close();
   if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
   await sleep(delay);
+  if (process.env.STUB_ERROR) {
+    out({ type: "result", subtype: "error_during_execution", is_error: true, total_cost_usd: 0.001, usage: { input_tokens: 100, output_tokens: 0 }, result: process.env.STUB_ERROR, session_id: session });
+    process.exit(1);
+  }
   const denials = process.env.STUB_DENY ? [{ tool_name: process.env.STUB_DENY }] : [];
   out({ type: "result", subtype: "success", total_cost_usd: 0.0123, usage: { input_tokens: turns * 1000, output_tokens: turns * 50 },
-        result: played.done ?? `Done: ${task.slice(0, 60)}`, permission_denials: denials, session_id: session });
+        result: (played.done ?? `Done: ${task.slice(0, 60)}`) + verdict("CLAUDE"), permission_denials: denials, session_id: session });
   process.exit(Number(process.env.STUB_EXIT ?? 0));
 })();

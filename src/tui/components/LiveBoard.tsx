@@ -122,7 +122,7 @@ function card(agent: AgentRecord, run: RunState | undefined, w: number, now: num
   return rows.map((r) => clipRow(r, w));
 }
 
-type Exchange = { ts: number; from: string; to: string; text: string; kind: "note" | "ask" | "reply" | "handoff" | "delegate" };
+export type Exchange = { ts: number; from: string; to: string; text: string; kind: "note" | "ask" | "reply" | "handoff" | "delegate" };
 
 const KIND_COLOR: Record<Exchange["kind"], string | undefined> = {
   note: undefined,
@@ -132,7 +132,7 @@ const KIND_COLOR: Record<Exchange["kind"], string | undefined> = {
   delegate: "cyan",
 };
 
-function exchanges(messages: OrgMessage[], tasks: Task[]): Exchange[] {
+export function exchanges(messages: OrgMessage[], tasks: Task[]): Exchange[] {
   const out: Exchange[] = [];
   for (const m of messages) {
     out.push({

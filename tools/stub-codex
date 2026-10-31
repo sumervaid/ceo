@@ -3,13 +3,17 @@
 // Env: STUB_TURNS, default 3 command items. STUB_DELAY_MS, default 300.
 //      STUB_NO_RESULT=1 never emits turn.completed. STUB_DENY=1 has one command
 //      denied by the sandbox. STUB_EXIT sets the exit code.
+// STUB_WRITE_FILE=<name> writes that file into the working directory before the run ends, so a check such as `test -f <name>` passes for this provider alone.
 // STUB_SCRIPT plays org calls during the run. See tools/stub-org.mjs.
 // Answers `--version` and `login status` for the setup check. Asserts the flags CEO must pass: --json, --sandbox, approval_policy="never".
+import { writeFileSync } from "node:fs";
 const turns = Number(process.env.STUB_TURNS ?? 3);
 const delay = Number(process.env.STUB_DELAY_MS ?? 300);
 const args = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+// STUB_VERDICT=pass|fail ends the final text with a judge's verdict. STUB_VERDICT_CODEX overrides it for this provider.
+const verdict = (who) => { const v = process.env[`STUB_VERDICT_${who}`] ?? process.env.STUB_VERDICT; return v ? `\nVERDICT: ${v}\nREASON: stub` : ""; };
 const flag = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
 if (args.includes("--version")) { process.stdout.write((process.env.STUB_CODEX_VERSION ?? "codex-cli 0.0.0 (stub)") + "\n"); process.exit(0); }
 // `codex login status`, as the setup check reads it. STUB_CODEX_LOGIN: chatgpt, the default, or apikey or none
@@ -58,9 +62,10 @@ process.stdin.on("end", async () => {
     await played.atStep(i);
   }
   played.close();
+  if (process.env.STUB_WRITE_FILE) writeFileSync(process.env.STUB_WRITE_FILE, "fixed\n");
   if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
   await sleep(delay);
-  out({ type: "item.completed", item: { id: "final", type: "agent_message", text: played.done ?? `Done: ${task.trim().slice(0, 60)}` } });
+  out({ type: "item.completed", item: { id: "final", type: "agent_message", text: (played.done ?? `Done: ${task.trim().slice(0, 60)}`) + verdict("CODEX") } });
   out({ type: "turn.completed", usage: { input_tokens: turns * 1000, cached_input_tokens: turns * 200, output_tokens: turns * 50 } });
   process.exit(Number(process.env.STUB_EXIT ?? 0));
 });

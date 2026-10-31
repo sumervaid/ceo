@@ -1,0 +1,149 @@
+#!/usr/bin/env node
+// Stub `everval` for $0 testing: the calls CEO makes, answered locally.
+// Commands: --version, doctor --json, collections import <file>, collections tasks <id> --output <file>,
+//           import-results <bundle.json>.
+// Collections are stored under $EVERVAL_DATA_DIR/stub-collections. The stub fails when that variable is unset.
+// Collection files must be JSON.
+// Grading, per scenario check:
+//   contains, equals       evaluated on the submitted output at the check's dotted path. A key that holds
+//                          the whole path, such as "src/a.txt", wins over dotted traversal.
+//   repository_tests,
+//   python_tests           pass when a string value in the output includes "FIXED".
+//   other kinds            pass.
+// A trial passes when every required check passes. Its score is the weighted mean of the check scores.
+// Env: STUB_EVERVAL_ERROR=1 returns trials with status "error". STUB_EVERVAL_LOG=<file> appends one line per call.
+//      STUB_EVERVAL_VERSION, default 0.9.0.
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import * as path from "node:path";
+
+const args = process.argv.slice(2);
+const out = (v) => process.stdout.write(typeof v === "string" ? `${v}\n` : `${JSON.stringify(v)}\n`);
+const die = (msg, code = 2) => {
+  process.stderr.write(`${msg}\n`);
+  process.exit(code);
+};
+const sha = (s) => createHash("sha256").update(s).digest("hex");
+const flag = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
+const version = process.env.STUB_EVERVAL_VERSION ?? "0.9.0";
+
+if (process.env.STUB_EVERVAL_LOG && args[0] !== "--version") {
+  appendFileSync(process.env.STUB_EVERVAL_LOG, `${args.slice(0, args[0] === "collections" ? 2 : 1).join(" ")}\n`);
+}
+
+const dataDir = () => {
+  const d = process.env.EVERVAL_DATA_DIR;
+  if (!d) die("EVERVAL_DATA_DIR is not set.");
+  const dir = path.join(d, "stub-collections");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+};
+const storePath = (id) => path.join(dataDir(), `${id}.json`);
+const load = (id) => {
+  if (!existsSync(storePath(id))) die(`Collection ${id} not found.`, 1);
+  return readFileSync(storePath(id), "utf8");
+};
+
+const pick = (output, p) => {
+  if (output && typeof output === "object" && p in output) return output[p];
+  let cur = output;
+  for (const part of String(p).split(".")) {
+    if (cur === null || typeof cur !== "object" || !(part in cur)) return undefined;
+    cur = cur[part];
+  }
+  return cur;
+};
+const hasFixed = (v) =>
+  typeof v === "string" ? v.includes("FIXED") : v && typeof v === "object" ? Object.values(v).some(hasFixed) : false;
+
+const gradeCheck = (check, output) => {
+  let passed = true;
+  let actual = null;
+  let message = "";
+  if (check.kind === "contains" || check.kind === "equals") {
+    actual = pick(output, check.path);
+    if (check.kind === "equals") passed = JSON.stringify(actual) === JSON.stringify(check.expected);
+    else if (typeof actual === "string") passed = actual.includes(String(check.expected));
+    else if (Array.isArray(actual)) passed = actual.includes(check.expected);
+    else passed = false;
+    if (!passed) message = `${check.kind} failed at ${check.path}`;
+  } else if (check.kind === "repository_tests" || check.kind === "python_tests") {
+    passed = hasFixed(output);
+    if (!passed) message = "tests failed: no fix found in the output";
+  }
+  return {
+    id: check.id, name: check.name ?? check.id, kind: check.kind, passed, score: passed ? 1 : 0,
+    expected: check.expected ?? null, actual, message, required: check.required !== false, weight: check.weight ?? 1,
+  };
+};
+
+const gradeScenario = (scenario, submission) => {
+  if (process.env.STUB_EVERVAL_ERROR === "1") {
+    return { scenario_id: scenario.id, status: "error", score: null, passed: false, checks: [], error: "stub: the grader failed" };
+  }
+  const checks = (scenario.checks ?? []).map((c) => gradeCheck(c, submission.output));
+  const weight = checks.reduce((n, c) => n + c.weight, 0);
+  const score = weight > 0 ? checks.reduce((n, c) => n + c.weight * c.score, 0) / weight : 1;
+  return {
+    scenario_id: scenario.id, status: "completed", score, passed: checks.every((c) => c.passed || !c.required), checks, error: null,
+  };
+};
+
+const BUNDLE_KEYS = ["name", "system_name", "collection_id", "collection_hash", "provenance", "submissions"];
+const SUBMISSION_KEYS = ["output", "cost_usd", "input_tokens", "output_tokens", "duration_ms", "trace", "provenance"];
+
+if (args[0] === "--version") {
+  out(version);
+} else if (args[0] === "doctor") {
+  out({ version, python: "3.12.0", docker_available: false, issues: [] });
+} else if (args[0] === "collections" && args[1] === "import") {
+  const file = args[2];
+  if (!file || !existsSync(file)) die(`No such file: ${file}`, 1);
+  const text = readFileSync(file, "utf8");
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    die("The stub reads JSON collections only.", 1);
+  }
+  const id = doc.id ?? `col-${sha(text).slice(0, 8)}`;
+  writeFileSync(storePath(id), text);
+  out({ id, name: doc.name ?? id, domain: doc.domain ?? "coding", scenarios: (doc.scenarios ?? []).map((s) => ({ id: s.id, name: s.name })) });
+} else if (args[0] === "collections" && args[1] === "tasks") {
+  const id = args[2];
+  const dest = flag("--output");
+  if (!id || !dest) die("usage: collections tasks <id> --output <file>", 1);
+  const text = load(id);
+  const doc = JSON.parse(text);
+  writeFileSync(dest, JSON.stringify({ collection_id: id, collection_hash: sha(text), scenarios: doc.scenarios ?? [] }));
+} else if (args[0] === "import-results") {
+  const file = args[1];
+  if (!file || !existsSync(file)) die(`No such file: ${file}`, 1);
+  const bundle = JSON.parse(readFileSync(file, "utf8"));
+  const extra = Object.keys(bundle).filter((k) => !BUNDLE_KEYS.includes(k));
+  if (extra.length > 0) die(`Extra keys are not permitted: ${extra.join(", ")}`, 1);
+  const text = load(bundle.collection_id);
+  if (bundle.collection_hash !== sha(text)) die("collection_hash does not match the collection.", 1);
+  const doc = JSON.parse(text);
+  const trials = [];
+  for (const [sid, sub] of Object.entries(bundle.submissions ?? {})) {
+    const bad = Object.keys(sub).filter((k) => !SUBMISSION_KEYS.includes(k));
+    if (bad.length > 0) die(`Extra keys are not permitted in submission ${sid}: ${bad.join(", ")}`, 1);
+    if (Array.isArray(sub.trace) && sub.trace.length > 200) die("trace holds at most 200 entries.", 1);
+    const scenario = (doc.scenarios ?? []).find((s) => s.id === sid);
+    if (!scenario) die(`Unknown scenario ${sid}.`, 1);
+    trials.push(gradeScenario(scenario, sub));
+  }
+  const failed = trials.length === 0;
+  out({
+    id: `exp-${sha(JSON.stringify(bundle)).slice(0, 8)}`,
+    status: failed ? "failed" : "completed",
+    name: bundle.name,
+    collection_id: bundle.collection_id,
+    snapshot_hash: sha(text).slice(0, 16),
+    trials,
+  });
+  if (failed) process.exit(1);
+} else {
+  die(`stub-everval: unsupported command: ${args.join(" ")}`);
+}

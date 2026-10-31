@@ -28,7 +28,7 @@ than copies. `pnpm build` is the only step after editing.
 ## Layout
 
 ```
-src/core/        no UI, no I/O beyond .ceo/, ~/.ceo/, git, tmux, the agent CLIs
+src/core/        no UI, no I/O beyond .ceo/, ~/.ceo/, git, tmux, the agent CLIs, docker, ssh, everval
   types.ts       AgentRecord (with provider), Mission, AutonomyLevel, LedgerEntry
   paths.ts       resolves .ceo/ to the GIT ROOT, not cwd
   lock.ts        cross-process file lock for ledger appends
@@ -67,12 +67,25 @@ src/core/        no UI, no I/O beyond .ceo/, ~/.ceo/, git, tmux, the agent CLIs
   nextstep.ts    "what should I do next", + role templates
   workspaces.ts  ~/.ceo/workspaces.json: the list of repos, nothing else
   tmux.ts        session/window/split helpers; every function degrades
+  swarm.ts       many copies of one agent: names, providers dealt round-robin
+  limits.ts      CEO_MAX_RUNNING, rate-limit detection, backoff per provider
+  reflex.ts      Reflex installed, scanned, and the command that scans
+  sandbox.ts     where a run's process executes: local, docker, ssh; wraps the plan
+  attempts.ts    one task as attempts: an arm and a worktree each, verify, promote
+  verify.ts      VerifierSpec, the verifier registry, the command kind, verdicts
+  verifiers.ts   barrel: the registry with the command and everval kinds
+  everval.ts     the everval kind: an Everval collection graded on an attempt's output
+  judge.ts       the judge kind: observe-level agents on other providers vote
+  gates.ts       action classes through the evidence rule; approval_request, approval_decide
+  router.ts      arms per kind of work; Thompson sampling over the ledger and Reflex's store
+  outcomes.ts    verified results and dollars per verified result; the outcome budget; allocation
+  evidence.ts    one import for every module that joins the attempt pipeline by registering
 
 src/bridge.ts    `ceo json` + `ceo op`: the machine interface, for scripts and CI
 src/mcp/         MCP server (29 tools) for the companion plugin; collab.ts is
                  the `org` server every run gets (10 tools, nothing that pays),
-                 plus 8 staffing and docket tools on the chief of staff's
-                 server only
+                 plus 9 staffing, docket and router tools on the chief of
+                 staff's server only
 src/tui/         Ink dashboard
   workspaces.ts  per-repo summaries read straight off each ledger file
   runs.ts        live runs keyed by (workspace, agent)
@@ -80,14 +93,17 @@ src/tui/         Ink dashboard
                  place, so a terminal never paints an erased screen
   chat.ts        the chat transcript as rows of coloured segments, pure
                  LiveBoard.tsx draws the live view from runs, the board and the queue
-  components/    Sidebar, Roster, Queue, RunPane, HireForm, TaskForm, Chat, …
+  components/    Sidebar, Roster, Queue, RunPane, HireForm, TaskForm, Approvals, Chat, …
+src/cli/         subcommands that outgrew cli.ts: approvals, outcomes, router,
+                 run, sandbox and verify. verify.ts holds `ceo mission` too
 src/cli.ts       the `ceo` binary (setup, suggest, task, workspace, json, op, …)
 docs/            the wiki: one page per concept, keys, cli, ledger reference
 hooks/           the companion plugin's classic shell hooks (jq, read-only)
 commands/        16 slash commands (markdown prompts, parse prose not flags)
 agents/          ceo-auditor, ceo-postmortem subagent definitions
-tools/           stub-claude, stub-codex, stub-gemini, stub-org.mjs (scripted org
-                 calls for any stub), keydrive.py, demo/ (one tape per GIF)
+tools/           stub-claude, stub-codex, stub-gemini, stub-docker, stub-everval,
+                 stub-org.mjs (scripted org calls for any stub), keydrive.py,
+                 demo/ (one tape per GIF)
 ```
 
 ## Five invariants
@@ -130,6 +146,11 @@ only through core functions that take the lock: the MCP server, the
 dashboard's `actions.ts` / `runs.ts`, and `src/bridge.ts`.
 `~/.ceo/workspaces.json` holds paths and names only, never a fact the
 ledger knows. The registry can therefore never disagree with the ledger.
+
+One rule belongs to the evidence layer. A task with verifiers reaches done
+only through a promote. An error from a check is never a pass. An error is
+not a fail of the work either. `updateTask` enforces the rule: a task with
+verifiers cannot become done without a promote in the ledger.
 
 ## Providers
 
@@ -323,6 +344,77 @@ starting the first queued task for each idle agent. Auto is off by default
 and shown inverse-yellow in the status bar when on, because auto-dispatch
 spends money without a keystroke per dollar.
 
+## Evidence
+
+`attempts.ts` runs a task as attempts when `usesAttempts` is true: the task
+has verifiers, or more than one sample. Every other task runs as one plain
+`runDelegation`. The pipeline has six steps.
+
+1. **Gates.** Each function in `attemptGates` may refuse the start with a
+   reason. `outcomes.ts` registers the outcome budget here.
+2. **Arms.** `chooseArms` in `router.ts` returns one arm per sample. A task
+   that names arms gets exactly those. Every other task draws arms by
+   Thompson sampling from the passes and fails of each arm on the task's
+   kind. The ledger supplies the record. Reflex's store adds a prior at half
+   weight, read-only.
+3. **Attempts.** Each attempt gets a worktree on branch
+   `ceo/<agent>--<attempt>` and one `runDelegation` with `attempt: {id, arm,
+   workdir}`. The run leaves the task's status alone. `attempt_start` and
+   `attempt_end` bracket the run. A directory with no commit runs one
+   attempt in the shared tree.
+4. **Verify.** When every attempt has ended, the task is `verifying`.
+   `verifyAll` runs each check on each finished attempt. Deterministic checks
+   run first. Judges run last. A failed required check skips the judges.
+   Each result is a `verify` event with the status, the score and the
+   evidence. `combine` turns the results into one verdict.
+5. **Promote.** The passing attempt with the best score wins. The cheaper
+   attempt wins a tie. `promote` records the winner and one dissent from
+   another arm. The task becomes done. The worktrees of the other attempts
+   are removed. The branches stay.
+6. **Hooks.** `promoteHooks` run after the promote. `gates.ts` registers
+   `mergeGate`. The gate lands the merge when the evidence rule clears. The
+   org setting must also allow auto-merge. Otherwise the gate writes an
+   `approval_request`.
+
+**Verifier kinds** register through `registerVerifier(kind, impl)`.
+`command` lives in `verify.ts`. `everval.ts` and `judge.ts` register on
+import. A result has the status `pass`, `fail` or `error`. `error` means the
+check could not run. A required `error` makes the verdict not pass. The
+verdict is also flagged errored. No path reads an error as a pass.
+
+**Judges** are agents, one per provider, named `judge-<provider>` and hired
+on first use. Each runs at observe. `judge.ts` refuses a roster entry of that
+name at a higher level. A judge is drawn from a provider other than the
+attempt's. Every judge must say pass for the check to pass.
+
+**Everval** is a subprocess. `everval.ts` imports a collection once per file
+hash. The module writes a submission bundle of the attempt's output. The
+module reads the experiment from `everval import-results`. The experiment
+decides the verdict, never the exit code. `EVERVAL_DATA_DIR` points at
+`.ceo/everval`.
+
+**One import.** `evidence.ts` imports every module that joins the pipeline by
+registering: the verifier kinds, the outcome gate and the merge gate.
+`tui/runs.ts` and `cli/run.ts` each import `evidence.ts` once. A path that
+starts attempts without the import would miss a gate with no error.
+
+**Mission checks.** `mission.ts` stores checks on `mission_set`.
+`checkMission` runs each check with scope `mission`. The state of a check is the
+latest `verify` event for the check.
+
+**Outcomes.** `outcomes.ts` reads attempts, verifies and promotes from the
+ledger in one pass. Nothing is stored beside the ledger. `dispatchPlan`
+orders workspaces by the inverse of dollars per verified outcome.
+
+**Sandboxes.** The runner builds one `RunPlan` per turn. `wrapPlan` in
+`sandbox.ts` turns the plan into a launcher command for docker or ssh. The
+flags stay. Invariant 4 holds in a container. The org server reads the host
+ledger. A sandboxed run therefore gets no org tools.
+
+**Reflex.** The router and `suggest.ts` read Reflex's store. Reflex is
+getting a CEO source adapter that reads `.ceo/runs` and treats `verify`
+events as reward. A new Reflex skill then becomes an arm for the router.
+
 ## Billing
 
 CEO holds no model credentials. CEO shells out to `claude`, `codex` and
@@ -333,7 +425,8 @@ redirect a provider to a metered account.
 The hire form shows the chosen provider's line before the hire.
 
 **Testing costs real money.** Point `CEO_CLAUDE_BIN` at `tools/stub-claude`
-and `CEO_CODEX_BIN` at `tools/stub-codex`. The claude stub emits `system`, N
+and `CEO_CODEX_BIN` at `tools/stub-codex`. `tools/stub-docker` and
+`tools/stub-everval` stand in for docker and everval. The claude stub emits `system`, N
 `assistant` turns and a `result` with `total_cost_usd`. The codex stub emits
 the exec JSONL above and refuses to start unless `exec --json --sandbox`
 and `-c approval_policy="never"` are present. A regression in the plan
@@ -362,6 +455,11 @@ read-only subset only. `ceo_task_update` belongs on the blocked side too.
 
 ## Known limits
 
+- A sandboxed run gets no org tools. A sandboxed run cannot resume a
+  session. The org server reads the host ledger. Every turn starts a new
+  container.
+- Approving push, pr, publish, send or pay records the decision only. CEO has
+  no executor for those classes yet.
 - The gemini step event shape follows the published docs. The parser is
   lenient about nesting, so a change in shape degrades to fewer live
   events rather than a failed run.

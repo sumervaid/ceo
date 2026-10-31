@@ -42,12 +42,14 @@
  */
 
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isTab, isReturn, isEscape } from "../keys.js";
 import { initLedger } from "../../core/ledger.js";
 import { orgExists, projectRoot } from "../../core/paths.js";
-import { listTasks, type Task } from "../../core/tasks.js";
+import { findTask, listTasks, type Task } from "../../core/tasks.js";
+import { usesAttempts } from "../../core/attempts.js";
+import { syncReflexSkills } from "../../core/loop.js";
 import type { AgentRecord, AutonomyLevel, Provider } from "../../core/types.js";
 import { ensureCurrentWorkspace, touchWorkspace } from "../../core/workspaces.js";
 import { allReadiness, anyReady, loginCommand, resetReadiness, type Readiness } from "../../core/setup.js";
@@ -97,7 +99,9 @@ import {
 import { useOrgState } from "../data.js";
 import { runKey, useRuns, type FinishedRun, type RunState } from "../runs.js";
 import { useWorkspaces } from "../workspaces.js";
-import { clamp, compactBudget, fit, nextAutonomy, tilde, usdExact, wrap } from "../format.js";
+import { clamp, clock, compactBudget, fit, nextAutonomy, tilde, usdExact, wrap } from "../format.js";
+import { cooldowns, coolingDown, maxRunning } from "../../core/limits.js";
+import { dispatchPlan } from "../../core/outcomes.js";
 import Activity from "./Activity.js";
 import AgentDetail from "./AgentDetail.js";
 import AuditPanel from "./AuditPanel.js";
@@ -105,10 +109,13 @@ import BudgetForm from "./BudgetForm.js";
 import Chat from "./Chat.js";
 import CompanyPicker from "./CompanyPicker.js";
 import LiveBoard from "./LiveBoard.js";
+import Sky from "./Sky.js";
 import Docket from "./Docket.js";
 import { Integrations, IssuePicker, PrDialog, SkillPicker } from "./Integrations.js";
 import DelegateForm from "./DelegateForm.js";
 import FireDialog, { type FireChoice } from "./FireDialog.js";
+import Approvals from "./Approvals.js";
+import { pendingApprovals } from "../../core/gates.js";
 import HelpOverlay from "./HelpOverlay.js";
 import HireForm, { TEMPLATE_PRESETS, type HirePreset } from "./HireForm.js";
 import MergeDialog, { ConflictReport } from "./MergeDialog.js";
@@ -164,6 +171,7 @@ type Modal =
   | { kind: "merge"; agent: string; unmerged: string[]; base: string }
   | { kind: "conflicts"; agent: string; conflicts: string[]; error: string }
   | { kind: "mission" }
+  | { kind: "approvals" }
   | { kind: "setup" }
   | { kind: "help" };
 
@@ -193,7 +201,7 @@ function useTerminalSize(): { columns: number; rows: number } {
   return size;
 }
 
-export function App({ initialView }: { initialView?: "chat" } = {}) {
+export function App({ initialView }: { initialView?: "chat" | "sky" } = {}) {
   const { exit } = useApp();
   const { columns, rows: terminalRows } = useTerminalSize();
   // Every screen is drawn one row short of the terminal. Ink clears the whole
@@ -219,6 +227,14 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
 
   const agents = state.roster?.agents ?? [];
   const tasks = state.tasks;
+  // Read when the ledger changes, not on every frame.
+  const approvalsWaiting = useMemo(() => {
+    try {
+      return pendingApprovals(activePath).length;
+    } catch {
+      return 0;
+    }
+  }, [activePath, state.ledgerLength]);
   const [selected, setSelected] = useState(0);
   const [selectedTask, setSelectedTask] = useState(0);
   const [focus, setFocus] = useState<Focus>("roster");
@@ -339,7 +355,33 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
   // Alerts read the latest dashboard state through a ref: the run hook keeps
   // the callback it was created with.
   const alertRef = useRef<(run: FinishedRun) => void>(() => {});
-  const { runs, start: startRun, cancel: cancelRun, dismiss: dismissRun } = useRuns(onSettled, (run) => alertRef.current(run));
+  const { runs, start: startPlainRun, cancel: cancelRun, dismiss: dismissRun, startTask } = useRuns(onSettled, (run) => alertRef.current(run));
+
+  /** Whether an agent has a run in flight: its own, or one of its attempts. */
+  const agentBusy = (workspace: string, agent: string): boolean =>
+    [...runsRef.current.values()].some((r) => r.workspace === workspace && r.agent === agent && r.status === "running");
+
+  /**
+   * Start work. A queued task with verifiers or several samples runs as
+   * attempts, one per arm, and reaches done only through a passing verdict.
+   * Anything else is one plain run, as before.
+   */
+  const startRun: typeof startPlainRun = (workspace, agent, task, taskId = null, opts = {}) => {
+    if (taskId && !opts.prompt) {
+      let queued: Task | null = null;
+      try {
+        queued = findTask(taskId, workspace);
+      } catch {
+        queued = null;
+      }
+      if (queued && usesAttempts(queued)) {
+        return startTask(workspace, taskId, (status, note) => {
+          setFlash({ text: `${taskId} ${status}: ${note}`, tone: status === "done" ? "ok" : "error" });
+        });
+      }
+    }
+    return startPlainRun(workspace, agent, task, taskId, opts);
+  };
   startRunRef.current = startRun;
   runsRef.current = runs;
 
@@ -364,7 +406,7 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
     const taken = new Set<string>();
     for (const t of queue) {
       if (!t.autoStart || t.requestedBy !== chief.name || t.status !== "queued" || !t.assignee || taken.has(t.assignee)) continue;
-      if (runsRef.current.get(runKey(workspace, t.assignee))?.status === "running") continue;
+      if (agentBusy(workspace, t.assignee)) continue;
       taken.add(t.assignee);
       start(workspace, t.assignee, t.title, t.id);
     }
@@ -451,6 +493,8 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
   chatOpenRef.current = chatOpen;
   // The live view: every agent by provider, and the exchanges between them.
   const [liveOpen, setLiveOpen] = useState(false);
+  // The constellation: the same org drawn as a sky.
+  const [skyOpen, setSkyOpen] = useState(initialView === "sky");
   const [chatDraft, setChatDraft] = useState("");
 
   // Runs for the workspace on screen, oldest first: the pane's switcher reads
@@ -483,6 +527,21 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
     const t = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(t);
   }, [activeRunsEverywhere.length]);
+
+  // Skills Reflex approved since the last look join the docket, where the
+  // router can offer each one as an arm. Once per workspace per session.
+  const syncedSkills = useRef(new Set<string>());
+  useEffect(() => {
+    if (!state.exists || syncedSkills.current.has(activePath)) return;
+    syncedSkills.current.add(activePath);
+    void syncReflexSkills(activePath)
+      .then((added) => {
+        if (added.length === 0) return;
+        refresh();
+        setFlash({ text: `Reflex skills joined the docket: ${added.join(", ")}. D shows them.`, tone: "ok" });
+      })
+      .catch(() => {});
+  }, [activePath, state.exists]);
 
   // The roster and queue can shrink underneath the selection when something
   // is fired or settled in another window.
@@ -663,7 +722,7 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
    * Reads the queue fresh from the ledger rather than from React state so a
    * task added a moment ago from another window is not missed.
    */
-  const dispatchOnce = (workspace: string): number => {
+  const dispatchOnce = (workspace: string, limit = Infinity): number => {
     let started = 0;
     let queue: Task[];
     try {
@@ -672,14 +731,23 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
       return 0;
     }
     const taken = new Set<string>();
+    // No ceiling unless CEO_MAX_RUNNING sets one. A provider waiting out a
+    // rate or usage limit keeps its tasks queued until the limit lifts.
+    const cap = maxRunning();
+    let runningNow = [...runsRef.current.values()].filter((r) => r.status === "running").length;
     for (const t of queue) {
+      if (cap !== null && runningNow >= cap) break;
+      if (started >= limit) break;
       if (t.status !== "queued" || !t.assignee || taken.has(t.assignee)) continue;
-      const key = runKey(workspace, t.assignee);
-      const live = runs.get(key);
-      if (live && live.status === "running") continue;
+      if (agentBusy(workspace, t.assignee)) continue;
+      const provider = t.provider ?? findAgent(t.assignee, workspace)?.provider;
+      if (provider && coolingDown(cooldowns, provider)) continue;
       const outcome = startRun(workspace, t.assignee, t.title, t.id);
       taken.add(t.assignee);
-      if (outcome.ok) started++;
+      if (outcome.ok) {
+        started++;
+        runningNow++;
+      }
     }
     return started;
   };
@@ -713,8 +781,12 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
     if (!autoDispatch) return;
     const tick = () => {
       let started = 0;
-      for (const ws of workspacesRef.current) {
-        if (ws.hasOrg && ws.waiting > 0) started += dispatchRef.current(ws.path);
+      // Cheaper per verified outcome goes first and gets more of the slots.
+      const cap = maxRunning();
+      const live = [...runsRef.current.values()].filter((r) => r.status === "running").length;
+      const waiting = workspacesRef.current.filter((ws) => ws.hasOrg && ws.waiting > 0).map((ws) => ws.path);
+      for (const { path, slots } of dispatchPlan(waiting, cap === null ? null : Math.max(0, cap - live))) {
+        started += dispatchRef.current(path, slots);
       }
       if (started > 0) {
         refresh();
@@ -1032,6 +1104,17 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
     if (r.ok) {
       if (isChief && !chatOpenRef.current) out.push({ kind: "chief", title: `${run.agent} replied`, body: first(r.text).slice(0, 180), workspace: where });
       else if (!isChief) out.push({ kind: "done", title: `${run.agent} finished`, body: `${run.task.slice(0, 120)} · $${r.costUsd.toFixed(4)}${r.costIsEstimate ? " est." : ""}`, workspace: where });
+    } else if (r.rateLimit) {
+      const lim = r.rateLimit;
+      out.push({ kind: "limit", title: `${lim.provider} hit a limit`, body: `${run.agent}'s task is back in the queue until ${clock(lim.retryAt)}. ${lim.reason}`.slice(0, 220), workspace: where });
+      // The task runs again when the limit lifts, with or without auto-dispatch.
+      const wait = Math.max(1000, lim.retryAt - Date.now() + 1000);
+      setTimeout(() => {
+        if (dispatchRef.current(where) > 0) {
+          refresh();
+          refreshWorkspaces();
+        }
+      }, Math.min(wait, 2 ** 31 - 1));
     } else if (r.error && r.error !== "cancelled") {
       out.push({ kind: /budget/i.test(r.error) ? "budget" : "failed", title: /budget/i.test(r.error) ? `${run.agent} is at its budget` : `${run.agent} failed`, body: first(r.error).slice(0, 180), workspace: where });
     }
@@ -1071,10 +1154,25 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
       if (key.ctrl && input === "c") exit();
       return;
     }
+    if (skyOpen) {
+      if (key.ctrl && input === "c") exit();
+      else if (isEscape(input, key) || input === "O" || input === "q") setSkyOpen(false);
+      else if (input === "L") {
+        setSkyOpen(false);
+        setLiveOpen(true);
+      } else if (input === "C") {
+        setSkyOpen(false);
+        openChat();
+      }
+      return;
+    }
     if (liveOpen) {
       if (key.ctrl && input === "c") exit();
       else if (isEscape(input, key) || input === "L" || input === "q") setLiveOpen(false);
-      else if (input === "C") {
+      else if (input === "O") {
+        setLiveOpen(false);
+        setSkyOpen(true);
+      } else if (input === "C") {
         setLiveOpen(false);
         openChat();
       }
@@ -1160,12 +1258,20 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
       setLiveOpen(true);
       return;
     }
+    if (input === "O") {
+      setSkyOpen(true);
+      return;
+    }
     if (input === "D") {
       setDocketOpen(true);
       return;
     }
     if (input === "I") {
       openIntegrations();
+      return;
+    }
+    if (input === "V") {
+      setModal({ kind: "approvals" });
       return;
     }
     if (input === "P" && selectedAgent) {
@@ -1641,6 +1747,9 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
         />
       );
     }
+    if (modal.kind === "approvals") {
+      return <Approvals cwd={activePath} width={modalWidth} onReport={report} onClose={() => setModal(null)} />;
+    }
     if (modal.kind === "help") {
       return <HelpOverlay width={modalWidth} onClose={() => setModal(null)} />;
     }
@@ -1806,6 +1915,32 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
     );
   }
 
+  if (skyOpen && !chatOpen) {
+    return (
+      <Box flexDirection="column">
+        {broken ? <BrokenChainBanner state={state} width={width} /> : null}
+        <Sky
+          workspaceName={workspaceName}
+          agents={agents}
+          runs={runList}
+          messages={state.messages}
+          tasks={tasks}
+          flash={flash}
+          width={width}
+          height={rows - (broken ? 2 : 0)}
+          onOpen={(name) => {
+            const i = agents.findIndex((a) => a.name === name);
+            if (i < 0) return;
+            setSkyOpen(false);
+            setFocus("roster");
+            setSelected(i);
+            setDetailOpen(true);
+          }}
+        />
+      </Box>
+    );
+  }
+
   if (liveOpen && !chatOpen) {
     return (
       <Box flexDirection="column">
@@ -1884,8 +2019,9 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
   const auditBoxHeight = auditContent + 2;
 
   const missionSpare = mainHeight - auditBoxHeight - 14;
+  const checkLine = state.missionChecks.length > 0 ? 1 : 0;
   const missionBodyLines = state.mission
-    ? clamp(missionSpare, 0, Math.min(2, state.mission.successCriteria.length + 1))
+    ? clamp(missionSpare, 0, Math.min(2 + checkLine, state.mission.successCriteria.length + 1 + checkLine))
     : 0;
   const missionBoxHeight = 1 + missionBodyLines + 2;
 
@@ -1932,7 +2068,7 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
 
         <Box width={rightWidth} flexDirection="column">
           {/* The work first, then the people doing it. */}
-          <MissionPanel mission={state.mission} width={rightWidth} bodyLines={missionBodyLines} />
+          <MissionPanel mission={state.mission} checks={state.missionChecks} width={rightWidth} bodyLines={missionBodyLines} />
 
           <Box height={topBoxHeight}>
             <Box
@@ -2048,6 +2184,8 @@ export function App({ initialView }: { initialView?: "chat" } = {}) {
           queued={tasks.filter((t) => t.status === "queued").length}
           blocked={tasks.filter((t) => t.status === "blocked").length}
           autoDispatch={autoDispatch}
+          outcome={activeWorkspace && activeWorkspace.attempts > 0 ? { verified: activeWorkspace.verified, usdPerVerified: activeWorkspace.usdPerVerified } : null}
+          approvals={approvalsWaiting}
           focus={focus}
           width={width}
         />

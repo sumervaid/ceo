@@ -92,10 +92,15 @@ export function staffingFor(level: AutonomyLevel): StaffingPolicy {
   return STAFFING[level] ?? STAFFING.execute;
 }
 
-/** How many agents the chief may hire in one reply. `CEO_CHIEF_MAX_HIRES` overrides. */
+/**
+ * How many agents the chief may hire in one reply. No limit by default: the
+ * allowance already bounds what the chief can spend on hires.
+ * `CEO_CHIEF_MAX_HIRES` sets a limit.
+ */
 export function chiefMaxHiresPerReply(env: NodeJS.ProcessEnv = process.env): number {
-  const n = Number(env.CEO_CHIEF_MAX_HIRES);
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
+  const raw = env.CEO_CHIEF_MAX_HIRES?.trim();
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : Infinity;
 }
 
 /** The level a hire by the chief may have at most: execute, and never above the chief's own. */
@@ -119,11 +124,14 @@ export function staffingPrompt(level: AutonomyLevel, env: NodeJS.ProcessEnv = pr
     lines.push("At propose, you may queue work with org_handoff. The operator starts it. You cannot hire, start runs or fire.");
   } else {
     lines.push(
-      `You may hire with org_hire, at most ${chiefMaxHiresPerReply(env)} per reply, at levels up to ${maxHireLevel(level)}.`,
+      Number.isFinite(chiefMaxHiresPerReply(env))
+        ? `You may hire with org_hire, at most ${chiefMaxHiresPerReply(env)} per reply, at levels up to ${maxHireLevel(level)}.`
+        : `You may hire with org_hire, as many as the work needs, at levels up to ${maxHireLevel(level)}. org_hire with a count hires a swarm of identical agents in one call.`,
       "Budgets come from your allowance, the money the operator lets you give other agents. A hire's budget draws from it. org_budget raises or cuts any agent's budget, and a cut returns what you had given. org_roster shows what is left.",
       "You may give work with org_delegate. The work starts when your reply ends, under the assignee's own budget and level.",
       "When the operator names a provider for a piece of work, use it: org_delegate takes a provider and runs that task there, and org_hire hires on it.",
       "org_handoff queues work that waits for the operator instead.",
+      "Staffing follows the router's evidence. org_router shows which arm wins for a kind of work.",
     );
     lines.push(
       p.fire

@@ -13,6 +13,7 @@
  * itself, so a hire here and a hire from an MCP tool call cannot interleave.
  */
 
+import type { VerifierSpec } from "../core/types.js";
 import { effectiveTools, policyFor } from "../core/autonomy.js";
 import {
   branchNameFor,
@@ -318,7 +319,7 @@ export function baseBranch(cwd?: string): string {
  * is a separate keystroke, or the dispatcher when auto is on.
  */
 export function addQueueTask(
-  input: { title: string; assignee: string | null; priority: TaskPriority },
+  input: { title: string; assignee: string | null; priority: TaskPriority; verifiers?: VerifierSpec[]; samples?: number },
   cwd?: string,
 ): MutationResult & { id?: string } {
   try {
@@ -337,7 +338,7 @@ export function addQueueTask(
 
 export function editQueueTask(
   id: string,
-  changes: { title?: string; assignee?: string | null; priority?: TaskPriority },
+  changes: { title?: string; assignee?: string | null; priority?: TaskPriority; verifiers?: VerifierSpec[]; samples?: number },
   cwd?: string,
 ): MutationResult {
   try {

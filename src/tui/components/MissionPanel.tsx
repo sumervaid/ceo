@@ -22,11 +22,14 @@
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 
+import type { MissionCheckStatus } from "../../core/mission.js";
 import type { Mission } from "../../core/types.js";
 import { fit, sinceHuman, wrap } from "../format.js";
 
 export type MissionPanelProps = {
   mission: Mission | null;
+  /** The mission's checks with the latest result of each. */
+  checks?: MissionCheckStatus[];
   /** Full dashboard width. The border and padding are subtracted here. */
   width: number;
   /**
@@ -36,7 +39,7 @@ export type MissionPanelProps = {
   bodyLines: number;
 };
 
-export function MissionPanel({ mission, width, bodyLines }: MissionPanelProps) {
+export function MissionPanel({ mission, checks = [], width, bodyLines }: MissionPanelProps) {
   const inner = Math.max(10, width - 4);
   const LABEL = "Mission ";
 
@@ -60,9 +63,12 @@ export function MissionPanel({ mission, width, bodyLines }: MissionPanelProps) {
   // criteria the label would be the widest thing on the panel, repeated.
   const criteria = mission.successCriteria;
   const meta = metaLine(mission);
+  // The checks come second, one line, ahead of the meta. They are the
+  // machine's answer to "done", so they outrank the age of the mission.
+  const checksReserved = checks.length > 0 && bodyLines > 1 ? 1 : 0;
   if (criteria.length > 0) {
     // Hold a line back for the meta only when there is more than one to give.
-    const reserved = bodyLines > 1 ? 1 : 0;
+    const reserved = (bodyLines - checksReserved > 1 ? 1 : 0) + checksReserved;
     for (const line of wrap(
       `done when: ${criteria.join(" · ")}`,
       bodyWidth,
@@ -71,6 +77,8 @@ export function MissionPanel({ mission, width, bodyLines }: MissionPanelProps) {
       body.push({ text: line });
     }
   }
+
+  if (checks.length > 0 && body.length < bodyLines) body.push(checksLine(checks));
 
   if (body.length < bodyLines) body.push(meta);
 
@@ -89,6 +97,17 @@ export function MissionPanel({ mission, width, bodyLines }: MissionPanelProps) {
       ))}
     </Frame>
   );
+}
+
+const MARK = { pass: "✓", fail: "✗", error: "!", unknown: "·" } as const;
+
+/** One line of checks: a mark and a name each. Red on a fail, yellow on an error, green when all pass. */
+function checksLine(checks: MissionCheckStatus[]): { text: string; color?: string } {
+  const text = `checks: ${checks.map((c) => `${MARK[c.state]} ${c.name}`).join("  ")}`;
+  if (checks.some((c) => c.state === "fail")) return { text, color: "red" };
+  if (checks.some((c) => c.state === "error")) return { text, color: "yellow" };
+  if (checks.every((c) => c.state === "pass")) return { text, color: "green" };
+  return { text };
 }
 
 /**

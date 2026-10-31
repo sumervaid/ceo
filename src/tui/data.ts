@@ -22,7 +22,7 @@ import { messages as readMessages, type OrgMessage } from "../core/collab.js";
 import { danglingDelegations, recentDelegations } from "../core/delegation.js";
 import { isGitRepo, unmergedCommits, worktreeStatus } from "../core/git.js";
 import { readLedger, rollup, verify } from "../core/ledger.js";
-import { current as currentMission } from "../core/mission.js";
+import { current as currentMission, missionStatus, type MissionCheckStatus } from "../core/mission.js";
 import {
   auditsDir,
   orgExists,
@@ -86,6 +86,8 @@ export type OrgState = {
    * and every agent's compiled prompt is missing a section.
    */
   mission: Mission | null;
+  /** The mission's checks with the latest result of each. Empty when the mission has none. */
+  missionChecks: MissionCheckStatus[];
   delegations: Delegation[];
   /** Notes agents and the person have posted, newest first. */
   messages: OrgMessage[];
@@ -111,6 +113,7 @@ function emptyState(exists: boolean, error: string | null = null): OrgState {
     exists,
     roster: null,
     mission: null,
+    missionChecks: [],
     delegations: [],
     messages: [],
     tasks: [],
@@ -242,6 +245,7 @@ export function readOrgState(cwd?: string): OrgState {
       exists: true,
       roster,
       mission: currentMission(cwd),
+      missionChecks: missionStatus(cwd),
       delegations: recentDelegations(DELEGATION_LIMIT, cwd),
       messages: readMessages(cwd, 50),
       tasks: listTasks(cwd),

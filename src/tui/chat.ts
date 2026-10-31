@@ -132,6 +132,8 @@ function statusOf(action: ChatAction, tasks: Map<string, Task>, running: Set<str
   switch (t.status) {
     case "running":
       return [{ text: `${spinner} running`, color: "cyan" }];
+    case "verifying":
+      return [{ text: `${spinner} verifying`, color: "magenta" }];
     case "queued":
       if (action.kind === "handoff") return [{ text: "waits for you", color: "yellow" }];
       return [{ text: running.has(t.assignee ?? "") ? "next in line" : "starting", dim: true }];

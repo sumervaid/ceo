@@ -28,6 +28,7 @@ import { append } from "./ledger.js";
 import { providerFor } from "./providers.js";
 import { hire, readRoster } from "./roster.js";
 import { providerReadiness } from "./setup.js";
+import { spreadProviders, swarmNames } from "./swarm.js";
 import { PROVIDERS, type AutonomyLevel, type Provider } from "./types.js";
 
 export type Seat = {
@@ -174,6 +175,8 @@ export type PlannedSeat = Seat & {
   movedFrom: Provider | null;
   /** Set when the seat is skipped, with the reason. */
   skip: string | null;
+  /** The template seat this one copies, when the company is scaled up. */
+  group: string;
 };
 
 export type CompanyPlan = {
@@ -182,6 +185,8 @@ export type CompanyPlan = {
   /** Worktrees were asked for and are not possible here. */
   worktreeNote: string | null;
   seats: PlannedSeat[];
+  /** How many agents each template seat becomes. */
+  scale: number;
   /** The chief of staff: hired with the company unless the org has one. */
   chief: { hire: boolean; name: string; provider: Provider };
   /** The sum of the budgets of the seats that will be hired. The chief has no cap. */
@@ -211,10 +216,13 @@ export function landingProvider(preferred: Provider, ready: (p: Provider) => boo
 }
 
 /** What hiring a company here would do, without doing it. */
+/** The largest team size the picker offers. A swarm by count has no limit. */
+export const MAX_SCALE = 50;
+
 export function planCompany(
   template: CompanyTemplate,
   cwd?: string,
-  opts: { worktrees?: WorktreeMode; ready?: (p: Provider) => boolean } = {},
+  opts: { worktrees?: WorktreeMode; ready?: (p: Provider) => boolean; scale?: number } = {},
 ): CompanyPlan {
   const ready = opts.ready ?? readyNow;
   const repo = isGitRepo(cwd);
@@ -231,24 +239,44 @@ export function planCompany(
   const taken = new Set(roster.map((a) => a.name));
   const sitting = roster.find((a) => a.chief);
 
-  const seats: PlannedSeat[] = template.seats.map((s) => {
+  // A scaled company turns each seat into a swarm: `coder-01` to `coder-08`,
+  // dealt across every ready provider, starting with the seat's own.
+  const scale = Math.max(1, Math.min(MAX_SCALE, Math.floor(opts.scale ?? 1)));
+  const seats: PlannedSeat[] = template.seats.flatMap((s): PlannedSeat[] => {
     const provider = landingProvider(s.provider, ready);
     const isolated = worktrees === "all" || (worktrees === "writers" && s.writes);
-    return {
+    if (scale === 1) {
+      return [{
+        ...s,
+        provider,
+        model: providerFor(provider).defaultModel(),
+        isolated,
+        movedFrom: provider === s.provider ? null : s.provider,
+        skip: taken.has(s.name) ? "already in the org" : null,
+        group: s.name,
+      }];
+    }
+    const order = [provider, ...PROVIDERS.filter((p) => p !== provider && ready(p))];
+    const names = swarmNames(s.name, scale, taken);
+    const spread = spreadProviders(scale, order);
+    return names.map((name, i) => ({
       ...s,
-      provider,
-      model: providerFor(provider).defaultModel(),
+      name,
+      brief: `${s.brief}\n\nOne of ${scale} ${s.name} agents. Claim work on the board before starting, so two members never do the same piece.`,
+      provider: spread[i],
+      model: providerFor(spread[i]).defaultModel(),
       isolated,
-      movedFrom: provider === s.provider ? null : s.provider,
-      skip: taken.has(s.name) ? "already in the org" : null,
-    };
+      movedFrom: i === 0 && provider !== s.provider ? s.provider : null,
+      skip: null,
+      group: s.name,
+    }));
   });
 
   const chiefProvider = sitting?.provider ?? landingProvider(preferredProviderOf(ready), ready);
   const chief = { hire: !sitting, name: sitting?.name ?? "chief", provider: chiefProvider };
   const totalCapUsd = seats.filter((s) => !s.skip).reduce((n, s) => n + s.budgetUsd, 0);
   const providers = [...new Set([...(chief.hire ? [chief.provider] : []), ...seats.filter((s) => !s.skip).map((s) => s.provider)])];
-  return { template, worktrees, worktreeNote, seats, chief, totalCapUsd, providers };
+  return { template, worktrees, worktreeNote, seats, scale, chief, totalCapUsd, providers };
 }
 
 function preferredProviderOf(ready: (p: Provider) => boolean): Provider {

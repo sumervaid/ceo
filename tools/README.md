@@ -23,12 +23,24 @@ difference. `CEO_REQUIRE_STUBS=1` makes the runner refuse anything else.
   stream-json` protocol. `CEO_GEMINI_BIN` points at the stub. The stub
   answers `--version` and `models` for the setup check.
   `STUB_GEMINI_LOGIN=none` signs the stub out.
+- `stub-docker`: a fake `docker` for the sandbox. It answers `version`,
+  `image inspect` and `rm -f`. For `run` it refuses a call without `--rm` or
+  a `-v <host>:/work` mount, then runs the inner command on this machine in
+  the mounted host directory. The names `claude`, `codex` and `agy` map to
+  the stub CLIs. `CEO_DOCKER_BIN` points at the stub. `STUB_DOCKER_LOG`
+  appends one JSON line per call. `STUB_DOCKER_DOWN=1` fails `version`.
+  `STUB_DOCKER_NO_IMAGE=1` fails `image inspect`.
 - `stub-org.mjs`: shared by the three stubs. `STUB_SCRIPT` names a JSON file
   of org calls. A stub plays those calls against the real org server during
   a run. Every note, handoff and hire is then a real ledger event.
 - `stub-gh`: a fake `gh` with a small set of issues and a pull request flow.
   `CEO_GH_BIN` points at the stub. `STUB_GH_LOGIN=none` signs the stub out.
   `STUB_GH_LOG` records each pull request body.
+- `stub-everval`: a fake `everval` that imports JSON collections, hands out
+  a collection hash and grades a submission bundle. `CEO_EVERVAL_BIN` points
+  at the stub. The stub fails without `EVERVAL_DATA_DIR`. `STUB_EVERVAL_ERROR=1`
+  returns errored trials. `STUB_EVERVAL_LOG` records each call. The grading
+  rules are in the stub's header.
 
 ## Driving the dashboard
 

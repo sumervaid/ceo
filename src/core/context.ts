@@ -355,11 +355,30 @@ export type ResolvedContext = {
  * the item limit, and the whole cut to the agent limit. Skills come back in
  * the same list, marked by kind, for the prompt's own section.
  */
-export function contextFor(agent: string, cwd?: string, workdir?: string): ResolvedContext[] {
+export function contextFor(agent: string, cwd?: string, workdir?: string, extra: { ids?: string[]; skills?: string[] } = {}): ResolvedContext[] {
   const perItem = itemMaxChars();
   let left = agentMaxChars();
   const out: ResolvedContext[] = [];
-  for (const it of listContext(cwd).filter((i) => i.agents.includes(agent))) {
+  const items = listContext(cwd);
+  const wanted = new Set(extra.ids ?? []);
+  const skillNames = new Set(extra.skills ?? []);
+  // An attempt's arm can carry skills the docket does not hold yet. Those are
+  // read straight from the skill catalogue.
+  for (const name of skillNames) {
+    const held = items.find((i) => i.kind === "skill" && (i.title === name || i.source === `skill:${name}`));
+    if (held) {
+      wanted.add(held.id);
+      continue;
+    }
+    const skill = findSkill(name, cwd);
+    if (!skill) continue;
+    let text = skillBody(skill);
+    if (text.length > perItem) text = text.slice(0, perItem);
+    if (text.length > left) text = text.slice(0, Math.max(0, left));
+    left -= text.length;
+    out.push({ id: `skill:${name}`, kind: "skill", title: name, source: skill.path ?? name, text, truncated: false });
+  }
+  for (const it of items.filter((i) => i.agents.includes(agent) || wanted.has(i.id))) {
     const full = itemText(it, cwd, workdir);
     let text = full.length > perItem ? full.slice(0, perItem) : full;
     if (text.length > left) text = text.slice(0, Math.max(0, left));
