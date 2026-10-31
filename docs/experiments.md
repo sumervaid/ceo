@@ -11,6 +11,12 @@ Each cell runs in a fresh root with a ledger of its own. The ledger is the
 raw data. The export flattens every ledger into two tables. The report
 splits the curve into sampling and teamwork.
 
+<p align="center">
+  <img src="teamwork.svg" alt="Tasks solved against team size on the simulator, with bands for correlated failure and teamwork" width="900">
+</p>
+
+`pnpm demo:teamwork` runs `tools/demo/teamwork.json` and redraws the chart.
+
 ```
 ceo experiment new scale             # write scale.json, a starter spec
 ceo experiment plan scale.json       # cells, attempts, binaries, budget

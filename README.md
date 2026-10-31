@@ -9,6 +9,46 @@
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-wiki-informational" alt="docs"></a>
 </p>
 
+## Teamwork, measured
+
+More agents solve more tasks. Most of that gain is extra tries, not
+teamwork. CEO measures the difference.
+
+<p align="center">
+  <img src="docs/teamwork.svg" alt="Tasks solved against team size from 1 to 32 agents. The naive line reaches 100 percent. Sampling reaches 92 percent. Independent agents reach 84 percent. A team reaches 86 percent. The green band between team and independent is the teamwork gain, largest at 8 agents" width="900">
+</p>
+
+The naive sum says thirty-two independent tries solve every task. In
+this run, thirty-two independent tries solve 84%. Tasks differ in difficulty. Tries in one run fail together.
+Thirty-two independent tries do the work of five. A team of eight adds 5.2
+points over eight independent agents. At thirty-two the gain falls to 2.2
+points, at three times the cost per task.
+
+| Agents | Independent | Team | Teamwork found, 95% interval | Teamwork planted |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 45.5% | 46.7% | +1.2 pts [+0.4, +2.1] | +1.9 pts |
+| 4 | 58.8% | 62.3% | +3.5 pts [+2.5, +4.5] | +3.7 pts |
+| 8 | 69.0% | 74.2% | +5.2 pts [+3.8, +6.8] | +4.5 pts |
+| 16 | 77.8% | 82.0% | +4.2 pts [+2.5, +5.8] | +4.0 pts |
+| 32 | 84.1% | 86.3% | +2.2 pts [+1.0, +3.6] | +2.3 pts |
+
+These numbers come from the simulator, not from real agents. The simulator
+plants every effect in advance. The analysis has to find each one. Every
+planted value sits inside the interval found. `ceo experiment` runs the
+same design on real agents in throwaway repos. Held-out checks score the
+pick. Selection never sees those checks.
+
+```
+ceo experiment new scale        a starter spec
+ceo experiment run scale.json   every cell, then the report
+pnpm demo:teamwork              redraws the chart above, in under two minutes, for free
+```
+
+See [experiments](docs/experiments.md) for the design, the model and every
+column of the report.
+
+## The dashboard
+
 <p align="center">
   <img src="docs/hero.gif" alt="An empty directory becomes a company in one keystroke; the chief of staff is asked for a fix; agents on claude, codex and gemini work the fix together, trading notes in the live view" width="900">
 </p>
@@ -21,6 +61,8 @@ handoff the moment the exchange happens. A hash-chained ledger records
 each hire, run, note and dollar with the model and the permissions behind
 each event.
 
+- **[Teamwork, measured.](#teamwork-measured)** Team size against tasks
+  solved, split into extra tries, correlated failure and teamwork.
 - **[A company in one keystroke.](#a-company-in-ten-seconds)** Six
   ready-made teams, each mixing providers, with a git worktree per agent
   on request.
@@ -282,10 +324,9 @@ and verdicts. Everval grades the collection that a check names. See
 
 ## Experiments
 
-More agents solve more tasks. Most of that gain is sampling, not teamwork.
-`ceo experiment` measures the difference. A spec names conditions, team
-sizes, seeds and tasks. Every cell runs in a fresh root with a ledger of its
-own. The report splits the curve in three: what independent tries predict,
+The [chart at the top](#teamwork-measured) comes from `ceo experiment`.
+A spec names conditions, team sizes, seeds and tasks. Every cell runs in a
+fresh root with a ledger of its own. The report splits the curve in three: what independent tries predict,
 what correlated failures take away, and what coordination adds.
 
 ```

@@ -3,6 +3,10 @@
 ## 0.5.0 (2026-10-31)
 
 ### Added
+- **Teamwork, measured, at the top of the README.** A chart of tasks solved
+  against team size, with bands for correlated failure and teamwork, and a
+  table of the teamwork found beside the teamwork planted.
+  `pnpm demo:teamwork` redraws the chart from `tools/demo/teamwork.json`.
 - **Experiments.** `ceo experiment new|plan|run|report|export|ls`. A spec
   names conditions, team sizes, seeds and tasks. Each cell runs in a fresh
   root with a ledger of its own. Two backends. `sim` draws attempts from a

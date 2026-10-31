@@ -1,0 +1,49 @@
+{
+  "name": "teamwork",
+  "backend": "sim",
+  "sizes": [1, 2, 4, 8, 16, 32],
+  "seeds": 100,
+  "conditions": [
+    {
+      "name": "independent",
+      "mode": "independent"
+    },
+    {
+      "name": "team",
+      "mode": "team"
+    }
+  ],
+  "tasks": [
+    { "id": "t01" },
+    { "id": "t02" },
+    { "id": "t03" },
+    { "id": "t04" },
+    { "id": "t05" },
+    { "id": "t06" },
+    { "id": "t07" },
+    { "id": "t08" },
+    { "id": "t09" },
+    { "id": "t10" },
+    { "id": "t11" },
+    { "id": "t12" },
+    { "id": "t13" },
+    { "id": "t14" },
+    { "id": "t15" },
+    { "id": "t16" },
+    { "id": "t17" },
+    { "id": "t18" },
+    { "id": "t19" },
+    { "id": "t20" },
+    { "id": "t21" },
+    { "id": "t22" },
+    { "id": "t23" },
+    { "id": "t24" }
+  ],
+  "sim": {
+    "runCorrelation": 0.3,
+    "team": {
+      "synergy": 0.15,
+      "conflictRate": 0.02
+    }
+  }
+}

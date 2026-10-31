@@ -66,6 +66,7 @@
     "demo:company": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/company.tape'",
     "demo:chat": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh chat && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/chat.tape'",
     "demo:live": "tools/demo/fixture.sh >/dev/null && tools/demo/fixture.sh team && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/live.tape'",
+    "demo:teamwork": "d=$(mktemp -d) && node dist/cli.js experiment run tools/demo/teamwork.json --out $d/teamwork >/dev/null && node dist/cli.js experiment report $d/teamwork --json > $d/report.json && node tools/teamwork-chart.mjs $d/report.json > docs/teamwork.svg && rm -rf $d",
     "demo:suggest": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/suggest.tape'",
     "demo:queue": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/queue.tape'",
     "demo:setup": "tools/demo/fixture.sh >/dev/null && bash -c 'eval \"$(tools/demo/fixture.sh env)\" && vhs tools/demo/setup.tape'",

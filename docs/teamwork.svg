@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="440" viewBox="0 0 960 440" role="img" aria-label="Tasks solved by team size on the simulator. Independent tries fall short of the sampling prediction. A team adds +5.2 pts at 8 agents.">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#11161d"/></linearGradient></defs>
+<rect width="960" height="440" rx="18" fill="url(#bg)"/>
+<g font-family="Menlo, SFMono-Regular, Consolas, 'Liberation Mono', 'DejaVu Sans Mono', monospace">
+<text x="36" y="44" font-size="18" fill="#c9d1d9">Solved, by team size</text>
+<text x="36" y="68" font-size="12" fill="#8b949e">simulator · 24 tasks × 100 seeds · planted synergy 0.15 · run correlation 0.3</text>
+<line x1="86" x2="640" y1="372" y2="372" stroke="#21262d"/>
+<text x="76" y="376" font-size="11" fill="#8b949e" text-anchor="end">0%</text>
+<line x1="86" x2="640" y1="302" y2="302" stroke="#21262d"/>
+<text x="76" y="306" font-size="11" fill="#8b949e" text-anchor="end">25%</text>
+<line x1="86" x2="640" y1="232" y2="232" stroke="#21262d"/>
+<text x="76" y="236" font-size="11" fill="#8b949e" text-anchor="end">50%</text>
+<line x1="86" x2="640" y1="162" y2="162" stroke="#21262d"/>
+<text x="76" y="166" font-size="11" fill="#8b949e" text-anchor="end">75%</text>
+<line x1="86" x2="640" y1="92" y2="92" stroke="#21262d"/>
+<text x="76" y="96" font-size="11" fill="#8b949e" text-anchor="end">100%</text>
+<line x1="86" x2="86" y1="372" y2="377" stroke="#8b949e"/>
+<text x="86" y="392" font-size="11" fill="#8b949e" text-anchor="middle">1</text>
+<line x1="196.8" x2="196.8" y1="372" y2="377" stroke="#8b949e"/>
+<text x="196.8" y="392" font-size="11" fill="#8b949e" text-anchor="middle">2</text>
+<line x1="307.6" x2="307.6" y1="372" y2="377" stroke="#8b949e"/>
+<text x="307.6" y="392" font-size="11" fill="#8b949e" text-anchor="middle">4</text>
+<line x1="418.4" x2="418.4" y1="372" y2="377" stroke="#8b949e"/>
+<text x="418.4" y="392" font-size="11" fill="#8b949e" text-anchor="middle">8</text>
+<line x1="529.2" x2="529.2" y1="372" y2="377" stroke="#8b949e"/>
+<text x="529.2" y="392" font-size="11" fill="#8b949e" text-anchor="middle">16</text>
+<line x1="640" x2="640" y1="372" y2="377" stroke="#8b949e"/>
+<text x="640" y="392" font-size="11" fill="#8b949e" text-anchor="middle">32</text>
+<text x="363" y="414" font-size="12" fill="#8b949e" text-anchor="middle">agents on one task</text>
+<path d="M 86.0 285.7 L 196.8 239.0 L 307.6 194.6 L 418.4 158.1 L 529.2 132.0 L 640.0 115.0 L 640.0 136.6 L 529.2 154.1 L 418.4 178.9 L 307.6 207.4 L 196.8 244.6 L 86.0 286.5 Z" fill="#f85149" opacity="0.16"/>
+<path d="M 86.0 286.5 L 196.8 241.3 L 307.6 197.5 L 418.4 164.3 L 529.2 142.4 L 640.0 130.5 L 640.0 136.6 L 529.2 154.1 L 418.4 178.9 L 307.6 207.4 L 196.8 244.6 L 86.0 286.5 Z" fill="#3fb950" opacity="0.42"/>
+<path d="M 86.0 285.6 L 196.8 225.9 L 307.6 156.0 L 418.4 106.6 L 529.2 92.8 L 640.0 92.0" fill="none" stroke="#6e7681" stroke-width="2" stroke-dasharray="6 5"/>
+<path d="M 86.0 285.7 L 196.8 239.0 L 307.6 194.6 L 418.4 158.1 L 529.2 132.0 L 640.0 115.0" fill="none" stroke="#8b949e" stroke-width="2"/>
+<path d="M 86.0 286.5 L 196.8 244.6 L 307.6 207.4 L 418.4 178.9 L 529.2 154.1 L 640.0 136.6" fill="none" stroke="#58a6ff" stroke-width="2.5"/>
+<path d="M 86.0 286.5 L 196.8 241.3 L 307.6 197.5 L 418.4 164.3 L 529.2 142.4 L 640.0 130.5" fill="none" stroke="#3fb950" stroke-width="2.5"/>
+<circle cx="86" cy="286.2979828331873" r="4.5" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+<circle cx="196.8" cy="245.40849416896083" r="4.5" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+<circle cx="307.6" cy="208.513431430611" r="4.5" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+<circle cx="418.4" cy="177.7863523923579" r="4.5" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+<circle cx="529.2" cy="153.63621812912436" r="4.5" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+<circle cx="640" cy="135.4028628140862" r="4.5" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+<circle cx="86" cy="286.48333333333335" r="2.5" fill="#58a6ff"/>
+<circle cx="196.8" cy="244.6" r="2.5" fill="#58a6ff"/>
+<circle cx="307.6" cy="207.38333333333333" r="2.5" fill="#58a6ff"/>
+<circle cx="418.4" cy="178.91666666666666" r="2.5" fill="#58a6ff"/>
+<circle cx="529.2" cy="154.06666666666666" r="2.5" fill="#58a6ff"/>
+<circle cx="640" cy="136.56666666666666" r="2.5" fill="#58a6ff"/>
+<circle cx="86" cy="286.2979828331873" r="4.5" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+<circle cx="196.8" cy="240.09144973734706" r="4.5" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+<circle cx="307.6" cy="198.13661941217916" r="4.5" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+<circle cx="418.4" cy="165.1596683727927" r="4.5" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+<circle cx="529.2" cy="142.37487918790592" r="4.5" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+<circle cx="640" cy="128.88348847000688" r="4.5" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+<circle cx="86" cy="286.48333333333335" r="2.5" fill="#3fb950"/>
+<circle cx="196.8" cy="241.33333333333334" r="2.5" fill="#3fb950"/>
+<circle cx="307.6" cy="197.46666666666667" r="2.5" fill="#3fb950"/>
+<circle cx="418.4" cy="164.33333333333331" r="2.5" fill="#3fb950"/>
+<circle cx="529.2" cy="142.4" r="2.5" fill="#3fb950"/>
+<circle cx="640" cy="130.5" r="2.5" fill="#3fb950"/>
+<text x="672" y="90" font-size="11" fill="#8b949e">at 32 agents</text>
+<line x1="672" x2="696" y1="112" y2="112" stroke="#6e7681" stroke-width="2.5" stroke-dasharray="6 5"/>
+<text x="706" y="116" font-size="12" fill="#c9d1d9">naive</text>
+<text x="930" y="116" font-size="12" fill="#8b949e" text-anchor="end">100%</text>
+<line x1="672" x2="696" y1="138" y2="138" stroke="#8b949e" stroke-width="2.5" />
+<text x="706" y="142" font-size="12" fill="#c9d1d9">sampling</text>
+<text x="930" y="142" font-size="12" fill="#8b949e" text-anchor="end">92%</text>
+<line x1="672" x2="696" y1="164" y2="164" stroke="#3fb950" stroke-width="2.5" />
+<text x="706" y="168" font-size="12" fill="#c9d1d9">team</text>
+<text x="930" y="168" font-size="12" fill="#8b949e" text-anchor="end">86%</text>
+<line x1="672" x2="696" y1="190" y2="190" stroke="#58a6ff" stroke-width="2.5" />
+<text x="706" y="194" font-size="12" fill="#c9d1d9">independent</text>
+<text x="930" y="194" font-size="12" fill="#8b949e" text-anchor="end">84%</text>
+<circle cx="684" cy="216" r="4.5" fill="none" stroke="#c9d1d9" stroke-width="1.5"/>
+<text x="706" y="220" font-size="12" fill="#c9d1d9">model truth</text>
+<rect x="672" y="245" width="24" height="14" fill="#f85149" opacity="0.35"/>
+<text x="706" y="256" font-size="12" fill="#c9d1d9">correlated failures</text>
+<text x="930" y="256" font-size="12" fill="#8b949e" text-anchor="end">−7.7 pts</text>
+<rect x="672" y="271" width="24" height="14" fill="#3fb950" opacity="0.6"/>
+<text x="706" y="282" font-size="12" fill="#c9d1d9">teamwork, peak</text>
+<text x="930" y="282" font-size="12" fill="#8b949e" text-anchor="end">+5.2 pts at 8</text>
+<text x="672" y="314" font-size="11" fill="#8b949e">naive: one rate, tries independent.</text>
+<text x="672" y="331" font-size="11" fill="#8b949e">sampling: each task's own rate.</text>
+<text x="672" y="348" font-size="11" fill="#8b949e">The simulator plants the answer.</text>
+<text x="672" y="365" font-size="11" fill="#8b949e">The analysis has to find it.</text>
+</g></svg>
