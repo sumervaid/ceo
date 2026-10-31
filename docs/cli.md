@@ -22,6 +22,7 @@ ceo setup [provider]   are claude, codex and gemini installed and signed in; `ce
 ceo suggest            propose a team; --hire hires it, --json, --everywhere, --days N
 ceo task …             the queue; --verify, --samples, --arm and --sandbox on `add`
 ceo run <task> [--samples n]   run a task now as attempts, verify each, keep the winner
+ceo experiment new|plan|run|report|export   team size against results, split into sampling and teamwork
 ceo verify <check> [--in <dir>]   run one check now
 ceo mission [checks [add <check>]|check]   the mission, the mission's checks, a run of every check
 ceo approvals [approve|deny <id>|auto-merge on|off]   the requests that wait for a decision
@@ -194,6 +195,24 @@ ceo router pick "Fix the crash in login" -n 3
 The kinds are `review`, `ci`, `debug`, `feature`, `edit`, `research` and
 `explore`. `-n` takes a whole number from 1 to 12. Default 3. See
 [the router](router.md).
+
+## `ceo experiment`
+
+```sh
+ceo experiment new scale                 # write scale.json, a sim starter
+ceo experiment new real --backend ceo    # a starter for real attempts on fixtures
+ceo experiment plan scale.json           # cells, attempts, binaries, budget
+ceo experiment run scale.json            # every unfinished cell, then the report
+ceo experiment run scale.json --fresh    # start over
+ceo experiment run real.json --live      # real CLIs; needs budgetUsd in the spec
+ceo experiment report scale [--json]     # the report, from the ledgers
+ceo experiment export scale              # cells.csv and attempts.csv
+ceo experiment ls                        # experiments in this project
+```
+
+Cells go to `.ceo/experiments/<name>/`. `--out <dir>` puts them elsewhere.
+`report` and `export` take a spec file, an experiment directory or a name.
+See [experiments](experiments.md).
 
 ## `ceo outcomes`
 

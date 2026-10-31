@@ -80,6 +80,9 @@ src/core/        no UI, no I/O beyond .ceo/, ~/.ceo/, git, tmux, the agent CLIs,
   router.ts      arms per kind of work; Thompson sampling over the ledger and Reflex's store
   outcomes.ts    verified results and dollars per verified result; the outcome budget; allocation
   evidence.ts    one import for every module that joins the attempt pipeline by registering
+  experiment.ts  specs, cells, the sim and ceo backends, resume, the CSV export
+  sim.ts         the simulated backend: attempts drawn from a model with planted parameters
+  analysis.ts    the curve split into sampling, correlation and coordination; bootstrap intervals
 
 src/bridge.ts    `ceo json` + `ceo op`: the machine interface, for scripts and CI
 src/mcp/         MCP server (29 tools) for the companion plugin; collab.ts is

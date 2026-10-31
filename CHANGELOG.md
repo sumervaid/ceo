@@ -3,6 +3,24 @@
 ## 0.5.0 (2026-10-31)
 
 ### Added
+- **Experiments.** `ceo experiment new|plan|run|report|export|ls`. A spec
+  names conditions, team sizes, seeds and tasks. Each cell runs in a fresh
+  root with a ledger of its own. Two backends. `sim` draws attempts from a
+  model with planted parameters: per-task difficulty, per-arm skill on each
+  task, within-run correlation, team synergy, conflicts, overhead and
+  overfitting to visible checks. Random numbers are common across
+  conditions, so team and independent cells pair draw for draw. `ceo` runs
+  `runTask` in a git repo per cell, copied from a fixture, and scores the
+  winner on held-out checks. Real CLIs need `--live` and `budgetUsd`. Runs
+  resume cell by cell and stop at the budget. The report splits solved rate
+  by team size into naive sampling, task-aware sampling from the unbiased
+  pass@k form, within-run correlation and coordination, with bootstrap
+  intervals over tasks, effective tries, cost per solved task, minutes to
+  the first verified attempt and the bend in the curve. For a sim, the
+  report prints the exact rate the planted model implies beside each
+  observed rate. `cells.csv` and `attempts.csv` export every cell. Notes of
+  kind `experiment_cell`, `experiment_result` and `experiment_deferred`
+  bracket each cell's ledger.
 - **Constellation layouts.** Six arrangements of the sky: orbit, providers,
   teams, web, spend and spiral. `auto` picks one from the shape of the org:
   a swarm shows as teams, a busy exchange as a web, a large mixed team as

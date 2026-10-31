@@ -35,6 +35,7 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOp, snapshotJson } from "./bridge.js";
+import { experimentCmd } from "./cli/experiment.js";
 import { outcomesCmd } from "./cli/outcomes.js";
 import { approvalsCmd } from "./cli/approvals.js";
 import { renderSnapshot } from "./tui/snapshot.js";
@@ -996,6 +997,12 @@ async function main(): Promise<void> {
       await runCmd(rest, cwd);
       return;
 
+    case "experiment":
+    case "experiments":
+    case "exp":
+      await experimentCmd(rest, cwd);
+      return;
+
     case "docket":
     case "context":
       await docketCmd(rest, cwd);
@@ -1153,6 +1160,7 @@ async function main(): Promise<void> {
           "  ceo company [id]       hire a whole company in one step; no id lists them; --worktrees writers|all|none, --size n",
           "  ceo swarm <name> <n>   hire n copies of one agent across providers; --brief, --providers, --budget, --level, --task",
           "  ceo run <task>         run a task now as attempts, verify each, keep the winner; --samples n",
+          "  ceo experiment new|plan|run|report|export   team size against results, split into sampling and teamwork",
           "  ceo docket [add|give|take|rm|refresh]   the context each agent is given",
           "  ceo skills [give <name> <agent>]        skills from Reflex and the CLIs' skill folders",
           "  ceo github · ceo pr <agent>             issues here; a pull request for an agent's branch",

@@ -22,6 +22,7 @@ The [README](../README.md) is the short one.
 | [Verification](verification.md) | A task should count as done only when a check passes. Also for the mission's checks and for Everval. |
 | [The router](router.md) | Staffing should follow which provider and model won this kind of work. |
 | [Sandboxes](sandboxes.md) | A run should happen in a container that is discarded when the process exits. |
+| [Experiments](experiments.md) | The question is how results scale with team size, and how much of the gain is teamwork. |
 | [Keys](keys.md) | Every key in the dashboard, by panel. |
 | [Command line](cli.md) | Every `ceo` subcommand, with examples. |
 

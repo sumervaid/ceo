@@ -58,6 +58,22 @@ export function hashEntry(base: LedgerEntryBase): string {
   return createHash("sha256").update(canonicalize(base), "utf8").digest("hex");
 }
 
+/**
+ * Chain a whole list of events in memory, from genesis. For a writer that
+ * produces a ledger in one go, such as the simulator, where appending one
+ * event at a time would reread the file for every event. The result
+ * verifies like any appended ledger.
+ */
+export function chainEntries(events: Array<{ type: LedgerEventType; agent: string | null; data: Record<string, unknown>; ts: number }>): LedgerEntry[] {
+  let prevHash = GENESIS_PREV_HASH;
+  return events.map((ev, seq) => {
+    const base: LedgerEntryBase = { seq, ts: ev.ts, type: ev.type, agent: ev.agent, data: ev.data, prevHash };
+    const entry: LedgerEntry = { ...base, hash: hashEntry(base) };
+    prevHash = entry.hash;
+    return entry;
+  });
+}
+
 /** Read every entry. Returns [] when no ledger exists yet. */
 export function readLedger(cwd?: string): LedgerEntry[] {
   const p = ledgerPath(cwd);

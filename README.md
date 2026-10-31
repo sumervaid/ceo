@@ -280,6 +280,27 @@ and verdicts. Everval grades the collection that a check names. See
 [the router](docs/router.md), [outcomes](docs/outcomes.md) and
 [sandboxes](docs/sandboxes.md).
 
+## Experiments
+
+More agents solve more tasks. Most of that gain is sampling, not teamwork.
+`ceo experiment` measures the difference. A spec names conditions, team
+sizes, seeds and tasks. Every cell runs in a fresh root with a ledger of its
+own. The report splits the curve in three: what independent tries predict,
+what correlated failures take away, and what coordination adds.
+
+```
+ceo experiment new scale        a starter spec on the simulator
+ceo experiment run scale.json   every cell, then the report
+ceo experiment export scale     cells.csv and attempts.csv for R or pandas
+```
+
+The simulator draws attempts from a model with planted parameters. A run
+costs nothing. The report sets the exact rate the model implies beside each
+observed rate. An analysis that misses a planted effect shows the miss. The
+ceo backend runs the same design on real attempts in throwaway repos, with
+held-out checks that selection never sees. Real CLIs need `--live` and a
+budget. See [experiments](docs/experiments.md).
+
 ## The docket
 
 <p align="center">
@@ -450,6 +471,7 @@ ceo verify <check> · ceo mission [checks|check]   one check now; the mission's 
 ceo approvals [approve|deny <id>|auto-merge on|off]   the requests that wait for a decision
 ceo router [kind] · ceo router pick "<title>"   which arm wins a kind of work
 ceo outcomes [--all] [budget …]   verified results and dollars per verified result
+ceo experiment new|plan|run|report|export   team size against results; sampling split from teamwork
 ceo sandbox [test]     where runs execute and whether the sandbox can start
 ceo post <agent|*> <text>   a note; ceo board shows the board
 ceo trace <agent>      what one agent is doing, line by line

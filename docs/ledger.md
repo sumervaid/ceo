@@ -70,6 +70,9 @@ ledger. Tasks have no cache at all.
 | `auto_merge` | a merge that cleared the evidence rule and landed alone | `taskId, attemptId, branch, sha, reason, evidence` |
 | `outcome_budget` | `ceo outcomes budget` | `attempts, verified, period` |
 | `promote_hook_failed` | a hook after a promotion raised an error | `taskId, detail` |
+| `experiment_cell` | the first entry after `org_init` in an experiment cell | `cell, experiment, backend, condition, mode, provider, size, seed, task` |
+| `experiment_result` | the last entry of a finished experiment cell | `cell, solved, winner, holdout` |
+| `experiment_deferred` | a provider limit refused every attempt of a cell | `cell, reason` |
 | (none) | `/note` free text | `text` |
 
 Codex and gemini runs are always estimates. Each carries that fact on the
