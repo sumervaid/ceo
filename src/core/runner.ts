@@ -65,6 +65,7 @@ import {
   wrapPlan,
   type SandboxKind,
 } from "./sandbox.js";
+import { isWorktreeRoot } from "./git.js";
 import { findTask, updateTask } from "./tasks.js";
 import type { AgentRecord, Arm, Provider } from "./types.js";
 
@@ -458,6 +459,15 @@ export function runDelegation(
 
   const root = projectRoot(cwd);
   const workdir = opts.attempt?.workdir ?? workdirFor(agent, cwd);
+
+  // An isolated agent whose worktree is gone must not run. Its folder sits inside
+  // the main repository, so anything written there would land on the main checkout.
+  if (agent.isolated && agent.worktreePath && !opts.attempt && !isWorktreeRoot(agent.worktreePath)) {
+    const error = `The worktree for "${agentName}" is missing. Recreate it before running this agent.`;
+    userEmit({ type: "failed", error });
+    settleTask("failed", { note: error });
+    return immediate(failedResult(error));
+  }
   const mission = currentMission(cwd);
 
   // The org's side of the prompt: notes for this agent and teammates'

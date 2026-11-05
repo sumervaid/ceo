@@ -299,6 +299,8 @@ function Composer({ w, tab }: { w: Workspace; tab: ChatTab }) {
             }
           }}
           onKeyDown={(e) => {
+            // Enter while composing Japanese or Chinese text confirms the word. It does not send.
+            if (e.nativeEvent.isComposing) return;
             if (mention && matches.length > 0) {
               if (e.key === "ArrowDown") { e.preventDefault(); setMention({ ...mention, index: (mention.index + 1) % matches.length }); return; }
               if (e.key === "ArrowUp") { e.preventDefault(); setMention({ ...mention, index: (mention.index - 1 + matches.length) % matches.length }); return; }

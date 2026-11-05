@@ -1,6 +1,7 @@
 /** The window process: windows, menus, dialogs and the engine's lifetime. */
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, shell, utilityProcess, type UtilityProcess } from "electron";
 import { execFileSync, spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { appendFileSync, chmodSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 
@@ -9,6 +10,7 @@ import type { EngineEvent } from "../shared/api";
 let win: BrowserWindow | null = null;
 let engine: UtilityProcess | null = null;
 let nextId = 1;
+let restarts: number[] = [];
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 
 /** A GUI app starts without the shell's PATH, and the agent CLIs live on that PATH. */
@@ -77,15 +79,30 @@ function startEngine(): void {
     for (const p of pending.values()) p.reject(new Error("The engine stopped."));
     pending.clear();
     engine = null;
-    if (!quitting) {
-      log(Buffer.from(`${new Date().toISOString()} engine exited with ${code}; restarting\n`));
-      startEngine();
-      win?.webContents.reload();
+    if (quitting) return;
+    log(Buffer.from(`${new Date().toISOString()} engine exited with ${code}\n`));
+    // A crash loop must not spin. Three exits in a minute stop the restarts and say so.
+    const now = Date.now();
+    restarts = restarts.filter((t) => now - t < 60000);
+    restarts.push(now);
+    if (restarts.length > 3) {
+      dialog.showErrorBox("CEO stopped working", `The engine keeps stopping. The log is at ${logFile()}.`);
+      return;
     }
+    startEngine();
+    win?.webContents.reload();
   });
 }
 
 let quitting = false;
+
+/** The one page that may have the bridge. Anything else that loads in the window, such as a file an agent wrote, gets nothing. */
+function indexUrl(): string {
+  return pathToFileURL(path.join(app.getAppPath(), "out", "ui", "index.html")).href;
+}
+function fromApp(e: Electron.IpcMainInvokeEvent): void {
+  if (e.senderFrame?.url.split("#")[0] !== indexUrl()) throw new Error("This call is only for the app's own page.");
+}
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -117,11 +134,12 @@ function createWindow(): void {
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (e, url) => {
-    if (!url.startsWith("file://")) {
-      e.preventDefault();
-      if (/^https?:\/\//.test(url)) void shell.openExternal(url);
-    }
+    if (url.split("#")[0] === indexUrl()) return;
+    e.preventDefault();
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
   });
+  win.webContents.on("will-attach-webview", (e) => e.preventDefault());
+  win.webContents.session.setPermissionRequestHandler((_c, permission, done) => done(permission === "notifications"));
   win.on("closed", () => {
     win = null;
   });
@@ -181,7 +199,8 @@ function menu(): void {
 }
 
 function ipc(): void {
-  ipcMain.handle("engine:call", (_e, method: string, params: unknown) => {
+  ipcMain.handle("engine:call", (e, method: string, params: unknown) => {
+    fromApp(e);
     if (!engine) throw new Error("The engine is restarting. Try again in a moment.");
     const id = nextId++;
     return new Promise((resolve, reject) => {
@@ -189,11 +208,13 @@ function ipc(): void {
       engine!.postMessage({ id, method, params });
     });
   });
-  ipcMain.handle("desktop:pickFolder", async () => {
+  ipcMain.handle("desktop:pickFolder", async (e) => {
+    fromApp(e);
     const r = await dialog.showOpenDialog(win!, { properties: ["openDirectory", "createDirectory"], buttonLabel: "Add Project" });
     return r.canceled ? null : r.filePaths[0] ?? null;
   });
-  ipcMain.handle("desktop:pickSavePath", async (_e, name: string) => {
+  ipcMain.handle("desktop:pickSavePath", async (e, name: string) => {
+    fromApp(e);
     const r = await dialog.showSaveDialog(win!, { defaultPath: name });
     return r.canceled ? null : r.filePath ?? null;
   });
@@ -201,8 +222,10 @@ function ipc(): void {
     if (!/^https?:\/\//.test(url)) throw new Error("Only web links open from here.");
     return shell.openExternal(url);
   });
-  ipcMain.handle("desktop:openPath", async (_e, target: string, editor?: string) => {
-    if (!statSync(target).isDirectory()) throw new Error("Only folders open from here.");
+  ipcMain.handle("desktop:openPath", async (e, target: string, editor?: string) => {
+    fromApp(e);
+    // A .app bundle is a folder too, and opening one runs it.
+    if (!statSync(target).isDirectory() || /\.app\/?$/i.test(target)) throw new Error("Only folders open from here.");
     if (!editor) return shell.openPath(target);
     if (!/^[\w .+-]+$/.test(editor)) throw new Error("That editor name is not valid.");
     return new Promise<string>((resolve) => {
@@ -211,7 +234,10 @@ function ipc(): void {
       child.on("error", (e) => resolve(e.message));
     });
   });
-  ipcMain.handle("desktop:copy", (_e, t: string) => clipboard.writeText(String(t)));
+  ipcMain.handle("desktop:copy", (e, t: string) => {
+    fromApp(e);
+    clipboard.writeText(String(t));
+  });
   ipcMain.handle("desktop:setBadge", (_e, n: number) => {
     app.setBadgeCount(n);
   });
@@ -254,12 +280,24 @@ if (!app.requestSingleInstanceLock() && !process.env.CEO_E2E) {
   });
   let quitAsked = false;
   app.on("before-quit", (e) => {
-    if (quitAsked || !engine || !win || process.env.CEO_E2E) {
+    if (quitting) return;
+    // The engine gets a moment to close its runs, so what they spent reaches the ledger.
+    const stopEngine = (): void => {
       quitting = true;
-      engine?.kill();
+      if (!engine) {
+        app.quit();
+        return;
+      }
+      const leave = (): void => app.exit(0);
+      engine.once("exit", leave);
+      setTimeout(leave, 3500);
+      engine.kill();
+    };
+    e.preventDefault();
+    if (quitAsked || !engine || !win || process.env.CEO_E2E) {
+      stopEngine();
       return;
     }
-    e.preventDefault();
     const id = nextId++;
     const answer = new Promise<{ workspaces: Array<{ runningTabs: string[] }> }>((resolve, reject) => {
       pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
@@ -279,10 +317,10 @@ if (!app.requestSingleInstanceLock() && !process.env.CEO_E2E) {
         if (r.response === 1) return;
       }
       quitAsked = true;
-      app.quit();
+      stopEngine();
     }).catch(() => {
       quitAsked = true;
-      app.quit();
+      stopEngine();
     });
   });
   app.on("window-all-closed", () => {

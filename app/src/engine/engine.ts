@@ -5,7 +5,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
+  appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import * as path from "node:path";
 
@@ -16,7 +16,7 @@ import { fire, findAgent, hire, readRoster, setBudget as coreSetBudget } from ".
 import { providerFor } from "../../../src/core/providers";
 import { runDelegation, type RunEvent, type RunHandle, type RunResult } from "../../../src/core/runner";
 import { allReadiness, resetReadiness } from "../../../src/core/setup";
-import { provisionWorktree, teardownWorktree, mergeAgentBranch } from "../../../src/core/git";
+import { isWorktreeRoot, provisionWorktree, teardownWorktree, mergeAgentBranch } from "../../../src/core/git";
 import { addWorkspace, ceoHome, listWorkspaces, removeWorkspace } from "../../../src/core/workspaces";
 import { ghBinary, provenanceBody, listIssues, readThread } from "../../../src/core/github";
 import { verifyAll, parseVerifier } from "../../../src/core/verify";
@@ -46,7 +46,11 @@ const LOG_LIMIT = 256 * 1024;
 const LOCAL_EXCLUDES = [".ceo/", ".context/", ".agents/mcp_config.json"];
 
 type Stored = Omit<Workspace, "activity" | "runningTabs" | "queued" | "git" | "spentUsd" | "scripts"> & {
+  /** The commit made at archive, and the commit it sat on. Restore undoes it only if it is still the tip. */
   wipCommit?: string | null;
+  wipParent?: string | null;
+  /** HEAD when the work merged. Anything newer is unmerged work. */
+  mergedHead?: string | null;
   sessionProviders?: Record<string, Provider>;
   lastGit?: GitSummary;
   unread?: boolean;
@@ -70,9 +74,10 @@ function readJson<T>(file: string, fallback: T): T {
   }
 }
 const uid = (): string => randomBytes(5).toString("hex");
+const shortRef = (ref: string): string => ref.replace(/^origin\//, "");
 const projectIdOf = (p: string): string => createHash("sha1").update(p).digest("hex").slice(0, 10);
 
-export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handlers; dispose: () => void } {
+export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handlers; dispose: () => Promise<void> } {
   const projects = new Map<string, Project>();
   const stored = new Map<string, Stored>();
   const races = new Map<string, Race>();
@@ -82,6 +87,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
   const terms = new Map<string, Term>();
   const gitCache = new Map<string, GitSummary>();
   const prCheckedAt = new Map<string, number>();
+  const planners = new Set<RunHandle>();
   let snapshotTimer: NodeJS.Timeout | null = null;
   let disposed = false;
 
@@ -91,7 +97,9 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
   const appDir = (root: string): string => path.join(root, ".ceo", "app");
   const wsFile = (root: string): string => path.join(appDir(root), "workspaces.json");
   const raceFile = (root: string): string => path.join(appDir(root), "races.json");
-  const configFile = (root: string): string => path.join(appDir(root), "project.json");
+  /** Kept in the person's home, never in the repo. A repo that shipped this file could run commands on the first workspace. */
+  const configFile = (root: string): string => path.join(home(), "projects", `${projectIdOf(root)}.json`);
+  const contextStore = (root: string, slug: string): string => path.join(appDir(root), "context", slug);
   const chatFile = (root: string, slug: string, tab: string): string => path.join(appDir(root), "chat", slug, `${tab}.jsonl`);
 
   let settings: Settings = { ...DEFAULT_SETTINGS, ...readJson<Partial<Settings>>(settingsFile(), {}) };
@@ -122,11 +130,17 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     projects.set(project.id, project);
     for (const s of readJson<Stored[]>(wsFile(p), [])) {
       if (stored.has(s.id)) continue;
+      // These files sit in the repo and may have come with a clone. A record that points anywhere else is dropped.
+      const slugOk = typeof s.slug === "string" && /^[a-z0-9][a-z0-9-]*$/.test(s.slug);
+      if (!slugOk || s.projectId !== project.id || s.id !== `${project.id}-${s.slug}` || s.worktree !== path.join(p, ".ceo", "worktrees", s.slug) || s.branch !== `ceo/${s.slug}`) continue;
       // A run cannot survive the app closing. A worktree in the middle of setup is ready enough to use.
       stored.set(s.id, { ...s, status: s.status === "creating" || s.status === "setup" ? "ready" : s.status });
       if (s.lastGit) gitCache.set(s.id, s.lastGit);
     }
-    for (const r of readJson<Race[]>(raceFile(p), [])) races.set(r.id, r);
+    for (const r of readJson<Race[]>(raceFile(p), [])) {
+      // In memory is newer than on disk. Replacing a live race would strand it.
+      if (r.projectId === project.id && !races.has(r.id)) races.set(r.id, r);
+    }
     return project;
   }
 
@@ -201,7 +215,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
   }
 
   async function refreshGit(s: Stored): Promise<void> {
-    if (s.status === "archived" || s.status === "creating" || !existsSync(s.worktree)) return;
+    if (s.status === "archived" || s.status === "archiving" || s.status === "creating" || !isWorktreeRoot(s.worktree)) return;
     const next = await G.summary(s.worktree, s.baseRef);
     const prev = gitCache.get(s.id);
     gitCache.set(s.id, next);
@@ -253,9 +267,11 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     const p = project(input.projectId);
     if (!p.isGit || !p.hasCommits) throw new Error("A workspace needs a git repository with a first commit.");
     ensureOrg(p.path);
-    let slug = pickName(takenNames(p.path));
+    const tried = takenNames(p.path);
+    let slug = pickName(tried);
     while ((await G.git(["show-ref", "--verify", "--quiet", `refs/heads/ceo/${slug}`], p.path)).ok) {
-      slug = pickName(new Set([...takenNames(p.path), slug]));
+      tried.add(slug);
+      slug = pickName(tried);
     }
     const tab: ChatTab = { id: uid(), title: "Chat", provider: input.provider, model: input.model, mode: input.mode, sessionId: null };
     const s: Stored = {
@@ -282,17 +298,26 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       if (p.hasRemote) await G.git(["fetch", "origin", "--prune"], p.path, { timeout: 20000 });
       let startPoint = p.baseRef;
       const start = input.start;
+      // Work continuing someone's branch pushes back to that branch. Never to the base: that would land unreviewed work.
+      const safeRef = (name: string | undefined): string | null => (name && name !== shortRef(p.baseRef) ? name : null);
       if (start.kind === "branch") {
         startPoint = start.ref;
-        s.pushRef = start.ref.replace(/^origin\//, "");
+        s.pushRef = safeRef(start.ref.replace(/^origin\//, ""));
       } else if (start.kind === "pr") {
         const fetched = await G.git(["fetch", "origin", `pull/${start.number}/head`], p.path, { timeout: 30000 });
         if (!fetched.ok) throw new Error(`Could not fetch pull request ${start.number}: ${fetched.stderr.trim()}`);
-        startPoint = "FETCH_HEAD";
-        const meta = await G.run(ghBinary(), ["pr", "view", String(start.number), "--json", "headRefName,title,body"], p.path);
+        // Pinned at once. Any other fetch rewrites FETCH_HEAD.
+        const head = await G.git(["rev-parse", "FETCH_HEAD"], p.path);
+        if (!head.ok) throw new Error(`Could not read pull request ${start.number}.`);
+        startPoint = head.stdout.trim();
+        const meta = await G.run(ghBinary(), ["pr", "view", String(start.number), "--json", "number,url,state,isDraft,mergeable,reviewDecision,headRefName,title,isCrossRepository"], p.path);
         if (meta.ok) {
-          const m = JSON.parse(meta.stdout) as { headRefName?: string; title?: string };
-          s.pushRef = m.headRefName ?? null;
+          const m = JSON.parse(meta.stdout) as { number?: number; url?: string; state?: string; isDraft?: boolean; mergeable?: string; reviewDecision?: string; headRefName?: string; title?: string; isCrossRepository?: boolean };
+          // A fork's branch name means nothing on origin. Pushing there would make a stray branch, or hit main.
+          s.pushRef = m.isCrossRepository ? null : safeRef(m.headRefName);
+          if (!m.isCrossRepository && m.number) {
+            s.pr = { number: m.number, url: m.url ?? "", state: (m.state as PullRequest["state"]) ?? "OPEN", isDraft: !!m.isDraft, mergeable: m.mergeable ?? "", reviewDecision: m.reviewDecision ?? "" };
+          }
           if (m.title && s.title === s.slug) s.title = m.title;
         }
       } else if (start.kind === "issue") {
@@ -314,43 +339,86 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
         },
         p.path,
       );
-      mkdirSync(path.join(s.worktree, ".context"), { recursive: true });
-      for (const f of p.config.copy) {
-        const clean = f.trim();
-        if (!clean || clean.includes("..") || path.isAbsolute(clean)) continue;
-        const from = path.join(p.path, clean);
-        if (existsSync(from) && statSync(from).isFile()) {
-          mkdirSync(path.dirname(path.join(s.worktree, clean)), { recursive: true });
-          copyFileSync(from, path.join(s.worktree, clean));
-        }
-      }
+      prepareWorktree(s, p);
       await refreshGit(s);
-      if (p.config.setup.trim()) {
-        s.status = "setup";
-        s.statusDetail = "Running the setup script";
-        save(s);
-        const code = await startScript(s, "setup", p.config.setup);
-        if (code !== 0) {
-          s.status = "ready";
-          s.statusDetail = `Setup script exited with ${code}`;
-          emit({ type: "notify", title: `${s.title}: setup failed`, body: `The setup script exited with ${code}.`, workspaceId: s.id, level: "failed", sound: settings.sound });
-        } else {
-          s.statusDetail = null;
-        }
-      } else {
-        s.statusDetail = null;
-      }
+      await runSetup(s, p);
+      // Archived or deleted while the setup script ran. Nothing more happens here.
+      if (!stored.has(s.id) || s.status === "archiving" || s.status === "archived") return;
       s.status = "ready";
       save(s);
       if (firstPrompt) send(s.id, s.tabs[0]!.id, firstPrompt, []);
       else drainAll(s);
     } catch (e) {
+      if (!stored.has(s.id) || s.status === "archiving" || s.status === "archived") return;
       s.status = "failed";
       s.statusDetail = e instanceof Error ? e.message : String(e);
       save(s);
       emit({ type: "notify", title: `${s.title}: could not start`, body: s.statusDetail, workspaceId: s.id, level: "failed", sound: settings.sound });
       settleRace(s.raceId);
     }
+  }
+
+  /** What a new or restored worktree needs that git does not hold. */
+  function prepareWorktree(s: Stored, p: Project): void {
+    mkdirSync(path.join(s.worktree, ".context"), { recursive: true });
+    const copied: string[] = [];
+    for (const f of p.config.copy) {
+      const clean = f.trim();
+      if (!clean || clean.includes("..") || path.isAbsolute(clean)) continue;
+      const from = path.join(p.path, clean);
+      const to = path.join(s.worktree, clean);
+      // A file the branch already tracks is the branch's. It is not overwritten, and a copied file is never committed.
+      if (existsSync(from) && statSync(from).isFile() && !existsSync(to)) {
+        mkdirSync(path.dirname(to), { recursive: true });
+        copyFileSync(from, to);
+        copied.push(clean);
+      }
+    }
+    if (copied.length) G.excludeLocal(p.path, copied);
+  }
+
+  async function runSetup(s: Stored, p: Project): Promise<void> {
+    if (!p.config.setup.trim()) {
+      s.statusDetail = null;
+      return;
+    }
+    s.status = "setup";
+    s.statusDetail = "Running the setup script";
+    save(s);
+    const code = await startScript(s, "setup", p.config.setup);
+    if (!stored.has(s.id) || s.status !== "setup") return;
+    if (code !== 0) {
+      s.statusDetail = `Setup script exited with ${code}`;
+      emit({ type: "notify", title: `${s.title}: setup failed`, body: `The setup script exited with ${code}.`, workspaceId: s.id, level: "failed", sound: settings.sound });
+    } else {
+      s.statusDetail = null;
+    }
+  }
+
+  const isRunning = (id: string): boolean => [...live.keys()].some((k) => k.startsWith(`${id}:`));
+  function refuseWhileRunning(id: string): void {
+    if (isRunning(id)) throw new Error("Stop the running agent first.");
+  }
+  /** The folder must be a real worktree. A plain folder there is inside the main repo, and git commands would hit the main checkout. */
+  function ownWorktree(s: Stored): string {
+    if (!isWorktreeRoot(s.worktree)) throw new Error("This workspace's worktree is missing. Recreate it from the banner at the top.");
+    return s.worktree;
+  }
+  /** Stops everything a workspace has running besides its agents, and forgets it. A reused name starts clean. */
+  function teardownRuntime(id: string): void {
+    for (const k of [...scripts.keys()]) {
+      if (k.startsWith(`${id}:`)) {
+        stopScriptRun(k);
+        scripts.delete(k);
+      }
+    }
+    const term = terms.get(id);
+    if (term) {
+      terms.delete(id);
+      term.pty.kill();
+    }
+    for (const k of [...queues.keys()]) if (k.startsWith(`${id}:`)) queues.delete(k);
+    prCheckedAt.delete(id);
   }
 
   // -- chat ----------------------------------------------------------------
@@ -415,7 +483,8 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     const s = ws(id);
     const tab = s.tabs.find((t) => t.id === tabId);
     if (!tab) throw new Error("That chat tab is closed.");
-    if (s.status === "archived") throw new Error("Restore this workspace to keep working in it.");
+    if (s.status === "archived" || s.status === "archiving") throw new Error("Restore this workspace to keep working in it.");
+    if (s.status === "failed") throw new Error(s.statusDetail ?? "This workspace could not start.");
     const clean = text.trim();
     if (!clean && attachments.length === 0) return;
     const key = `${id}:${tabId}`;
@@ -426,6 +495,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       pushSnapshot();
       return;
     }
+    ownWorktree(s);
     start(s, tab, clean, attachments);
   }
 
@@ -434,6 +504,9 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     const root = rootOf(s);
     const display = text || "Please address the attached comments.";
     const providers = (s.sessionProviders ??= {});
+    // The tab's selector may change during the run. This run's record stays with what it ran on.
+    const runProvider = tab.provider;
+    const runModel = tab.model;
     const handoff = !!tab.sessionId && providers[tab.id] !== tab.provider;
     const resume = tab.sessionId && !handoff ? tab.sessionId : null;
     const prompt = promptFor(s, tab, display, attachments, handoff);
@@ -491,22 +564,31 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       onEvent,
     });
     save(s);
-    state.handle.finished.then((r) => {
+    const settled = (r: RunResult): void => {
       flush();
       live.delete(key);
+      // Deleted while running. The ledger has the run. There is nowhere left to report it.
+      if (!stored.has(s.id)) return;
       if (r.sessionId) {
         tab.sessionId = r.sessionId;
-        providers[tab.id] = tab.provider;
+        providers[tab.id] = runProvider;
       }
       const cancelled = r.error === "cancelled";
       appendItem(s, tab.id, {
-        id: uid(), ts: Date.now(), kind: "result", ok: r.ok, provider: tab.provider, model: tab.model,
+        id: uid(), ts: Date.now(), kind: "result", ok: r.ok, provider: runProvider, model: runModel,
         costUsd: r.costUsd, estimate: r.costIsEstimate, durationMs: r.durationMs, inputTokens: r.inputTokens, outputTokens: r.outputTokens,
         error: r.error, cancelled, retryAt: r.rateLimit?.retryAt ?? null,
       });
+      const failedCommit = r.delegationId ? readLedgerSafe(root).find((e) => e.type === "note" && e.data.kind === "commit_failed" && e.data.delegationId === r.delegationId) : null;
+      if (failedCommit) appendItem(s, tab.id, { id: uid(), ts: Date.now(), kind: "system", text: `This run's work was not committed. ${String(failedCommit.data.detail ?? "")}` });
       s.unread = true;
-      const next = queues.get(key)?.shift();
+      const next = s.status === "ready" ? queues.get(key)?.shift() : undefined;
       void refreshGit(s).then(() => pushSnapshot());
+      noteRaceRun(s, r);
+      // A pull request should carry the fix an agent just made, or CI keeps judging the old commit.
+      if (r.ok && s.pr?.state === "OPEN") {
+        void pushBranch(s).catch((e: Error) => appendItem(s, tab.id, { id: uid(), ts: Date.now(), kind: "system", text: `Could not push to the pull request. ${e.message}` }));
+      }
       if (next) {
         save(s);
         start(s, tab, next.text, next.attachments);
@@ -522,7 +604,11 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
           workspaceId: s.id, level: r.ok ? "done" : "failed", sound: settings.sound,
         });
       }
-      noteRaceRun(s, tab, r);
+    };
+    state.handle.finished.then(settled, (e: unknown) => {
+      // A run that threw on its way out still has to let go of the tab, or it looks busy forever.
+      const message = e instanceof Error ? e.message : String(e);
+      settled({ ok: false, text: "", costUsd: 0, inputTokens: 0, outputTokens: 0, durationMs: Date.now() - state.startedAt, denials: [], error: message, costIsEstimate: false, turns: 0, delegationId: null, sessionId: null });
     });
   }
 
@@ -607,7 +693,19 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
   }
 
   async function prFor(s: Stored): Promise<PrView | null> {
-    const target = s.pr?.number ? String(s.pr.number) : (s.pushRef ?? s.branch);
+    let target = s.pr?.number ? String(s.pr.number) : null;
+    if (!target) {
+      // Open pull requests only. A branch name can match an old merged one, which says nothing about this work.
+      const open = await G.run(ghBinary(), ["pr", "list", "--head", s.pushRef ?? s.branch, "--state", "open", "--json", "number", "--limit", "1"], s.worktree, { timeout: 15000 });
+      if (!open.ok) return null;
+      try {
+        const n = (JSON.parse(open.stdout) as Array<{ number?: number }>)[0]?.number;
+        if (!n) return null;
+        target = String(n);
+      } catch {
+        return null;
+      }
+    }
     const r = await G.run(ghBinary(), ["pr", "view", target, "--json", "number,url,state,isDraft,mergeable,reviewDecision,statusCheckRollup"], s.worktree, { timeout: 15000 });
     if (!r.ok) return null;
     try {
@@ -685,23 +783,38 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
         }
       }
     }
-    const running = [...live.keys()].some((k) => k.startsWith(`${id}:`));
-    const d = decideNext({ running, hasRemote: p.hasRemote, ghReady: gh.ok, git, pr: s.pr, runs, reviews, merged: !!s.mergedAt });
+    const running = isRunning(id);
+    let unpushedCount = 0;
+    let newWork = false;
+    if (s.status !== "archived" && isWorktreeRoot(s.worktree)) {
+      const head = (await G.git(["rev-parse", "HEAD"], s.worktree)).stdout.trim();
+      newWork = !!s.mergedAt && !!s.mergedHead && s.mergedHead !== head;
+      if (s.pr?.state === "OPEN") unpushedCount = await G.unpushed(s.worktree, s.pushRef ?? s.branch, s.baseRef);
+      else if (newWork) unpushedCount = 1;
+    }
+    const d = decideNext({ running, hasRemote: p.hasRemote, ghReady: gh.ok, git, pr: s.pr, runs, reviews, merged: !!s.mergedAt, unpushed: unpushedCount });
     return { ghReady: gh.ok, ghReason: gh.reason, git, pr: s.pr, runs, reviews, next: d.next, nextLabel: d.label, nextDetail: d.detail };
   }
 
   async function pushBranch(s: Stored): Promise<void> {
+    const target = s.pushRef ?? s.branch;
+    // The last line of defense. Review is the point, so nothing here ever lands on the base directly.
+    if (target === shortRef(s.baseRef)) throw new Error(`Refusing to push to ${target}, the base branch. Open a pull request instead.`);
     const ref = s.pushRef ? `${s.branch}:${s.pushRef}` : s.branch;
     const r = await G.git(["push", "-u", "origin", ref], s.worktree, { timeout: 120000 });
     if (!r.ok) throw new Error(`git push failed: ${r.stderr.trim().split("\n").pop() ?? ""}`);
   }
 
-  async function commitIfDirty(s: Stored, message: string): Promise<void> {
+  async function commitIfDirty(s: Stored, message: string, opts: { noVerify?: boolean } = {}): Promise<void> {
+    ownWorktree(s);
     const status = await G.git(["status", "--porcelain"], s.worktree);
     if (!status.stdout.trim()) return;
+    // git add would mark these resolved, and the conflict markers would be committed as code.
+    const open = await G.unmerged(s.worktree);
+    if (open.length > 0) throw new Error(`${open.length} file${open.length === 1 ? " has" : "s have"} unresolved conflicts: ${open.slice(0, 4).join(", ")}. Resolve them first, or ask the agent to.`);
     const add = await G.git(["add", "-A"], s.worktree);
     if (!add.ok) throw new Error(add.stderr.trim());
-    const c = await G.git(["commit", "-m", message], s.worktree);
+    const c = await G.git(["commit", ...(opts.noVerify ? ["--no-verify"] : []), "-m", message], s.worktree);
     if (!c.ok) throw new Error(`git commit failed: ${(c.stderr || c.stdout).trim().split("\n").pop() ?? ""}`);
   }
 
@@ -725,7 +838,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
         { projectId: p.projectId, title: `${race.title} · ${LABEL[arm.provider]}`, start: { kind: "base" }, prompt, provider: arm.provider, model: arm.model, mode: "build", budgetUsd: p.budgetUsd },
         { raceId: race.id, skipLimit: true },
       );
-      race.entries.push({ workspaceId: w.id, provider: arm.provider, model: arm.model, state: "running", detail: "Working", costUsd: 0, durationMs: 0, added: 0, removed: 0 });
+      race.entries.push({ workspaceId: w.id, provider: arm.provider, model: arm.model, state: "running", runOk: false, detail: "Working", costUsd: 0, durationMs: 0, added: 0, removed: 0 });
       ensureOrg(proj.path);
       append("attempt_start", w.slug, { taskId: race.id, attemptId: w.slug, agent: w.slug, arm: { provider: arm.provider, model: arm.model }, mode: "race", why: "race", branch: `ceo/${w.slug}`, worktree: w.worktree, base: proj.baseRef, kind }, proj.path);
     }
@@ -734,7 +847,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     return race;
   }
 
-  function noteRaceRun(s: Stored, tab: ChatTab, r: RunResult): void {
+  function noteRaceRun(s: Stored, r: RunResult): void {
     if (!s.raceId) return;
     const race = races.get(s.raceId);
     const entry = race?.entries.find((e) => e.workspaceId === s.id);
@@ -744,8 +857,9 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     const outcome = r.ok ? "done" : r.error === "cancelled" ? "cancelled" : r.rateLimit ? "rate_limited" : "failed";
     append("attempt_end", s.slug, { taskId: race.id, attemptId: s.slug, delegationId: r.delegationId, outcome, costUsd: r.costUsd, ...(r.ok ? {} : { error: (r.error ?? "").slice(0, 300) }) }, rootOf(s));
     entry.state = r.ok ? "checking" : r.error === "cancelled" ? "cancelled" : "failed";
+    entry.runOk = r.ok;
     entry.detail = r.ok ? "Finished" : (r.error ?? "Failed");
-    void tab;
+    persist(rootOf(s));
     settleRace(race.id);
   }
 
@@ -758,6 +872,11 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       const g = gitCache.get(s.id) ?? EMPTY_GIT;
       entry.added = g.added;
       entry.removed = g.removed;
+      if (!isWorktreeRoot(s.worktree)) {
+        entry.state = "failed";
+        entry.detail = "This attempt's worktree is gone";
+        continue;
+      }
       if (!race.check) {
         entry.state = "no-check";
         entry.detail = "No check set";
@@ -769,6 +888,13 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       entry.state = v.pass ? "passed" : "failed";
       entry.detail = v.pass ? "Check passed" : `Check failed. ${v.results?.[0]?.result?.detail ?? ""}`.trim().replace(/:\s*$/, ".");
       s.checkResult = { pass: v.pass, detail: entry.detail, at: Date.now() };
+    }
+    // An agent that changed nothing passes whatever the base passes. That is not a win.
+    for (const e of race.entries) {
+      if (e.state === "passed" && e.added + e.removed === 0) {
+        e.state = "failed";
+        e.detail = "Passed the check, but changed nothing";
+      }
     }
     const passing = race.entries.filter((e) => e.state === "passed").sort((a, b) => a.costUsd - b.costUsd || a.added + a.removed - (b.added + b.removed) || a.durationMs - b.durationMs);
     race.winnerId = passing[0]?.workspaceId ?? null;
@@ -824,7 +950,8 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       `Goal: ${p.goal.trim()}`,
     ].join("\n\n");
     const handle = runDelegation(name, `Plan: ${p.goal.trim().slice(0, 80)}`, { cwd: proj.path, prompt, provider: p.provider, via: "plan" });
-    const r = await handle.finished;
+    planners.add(handle);
+    const r = await handle.finished.finally(() => planners.delete(handle));
     if (!r.ok) throw new Error(r.error ?? "The planner failed.");
     const start = r.text.indexOf("{");
     const end = r.text.lastIndexOf("}");
@@ -978,7 +1105,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       emit({ type: "terminal", id, data: d });
     });
     pty.onExit((e) => {
-      terms.delete(id);
+      if (terms.get(id) === term) terms.delete(id);
       emit({ type: "terminal-exit", id, code: e.exitCode });
     });
     return term;
@@ -1046,10 +1173,10 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     removeProject: ({ projectId }) => {
       const p = project(projectId);
-      if ([...stored.values()].some((s) => s.projectId === projectId && [...live.keys()].some((k) => k.startsWith(`${s.id}:`)))) {
+      if ([...stored.values()].some((s) => s.projectId === projectId && isRunning(s.id))) {
         throw new Error("Stop the running agents in this project first.");
       }
-      for (const [id, s] of stored) if (s.projectId === projectId) { stored.delete(id); gitCache.delete(id); }
+      for (const [id, s] of stored) if (s.projectId === projectId) { teardownRuntime(id); stored.delete(id); gitCache.delete(id); }
       for (const [id, r] of races) if (r.projectId === projectId) races.delete(id);
       projects.delete(projectId);
       removeWorkspace(p.path);
@@ -1058,8 +1185,6 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     saveProjectConfig: async ({ projectId, config }) => {
       const p = project(projectId);
       const next = { ...p.config, ...config };
-      mkdirSync(appDir(p.path), { recursive: true });
-      G.excludeLocal(p.path, LOCAL_EXCLUDES);
       atomicWrite(configFile(p.path), JSON.stringify(next, null, 2));
       const out = await loadProject(p.path, p.name);
       pushSnapshot();
@@ -1092,46 +1217,108 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     archiveWorkspace: async ({ id }) => {
       const s = ws(id);
-      if (s.status === "archived") return;
-      for (const [k, l] of [...live]) if (k.startsWith(`${id}:`)) { queues.delete(k); l.handle.cancel(); }
-      for (const kind of ["run", "setup", "check"] as ScriptKind[]) stopScriptRun(`${id}:${kind}`);
-      const term = terms.get(id);
-      if (term) { term.pty.kill(); terms.delete(id); }
+      if (s.status === "archived" || s.status === "archiving") return;
+      if (s.status === "creating") throw new Error("This workspace is still being created. Try again in a moment.");
       const p = project(s.projectId);
-      if (existsSync(s.worktree)) {
-        if (p.config.archive.trim()) await startScript(s, "archive", p.config.archive).catch(() => 1);
-        const before = await G.git(["rev-parse", "HEAD"], s.worktree);
-        const status = await G.git(["status", "--porcelain"], s.worktree);
-        if (status.stdout.trim()) {
-          await commitIfDirty(s, `ceo(${s.slug}): work in progress at archive`);
-          s.wipCommit = before.stdout.trim();
-        }
-        teardownWorktree(s.slug, {}, p.path);
+      const hasTree = isWorktreeRoot(s.worktree);
+      // Everything that could stop an archive is checked before anything is stopped.
+      if (hasTree) {
+        const on = (await G.git(["symbolic-ref", "--quiet", "--short", "HEAD"], s.worktree)).stdout.trim();
+        if (on !== s.branch) throw new Error(`This workspace is on ${on || "a detached HEAD"}, not ${s.branch}. Switch back in its terminal, so the work stays on its branch.`);
+        const open = await G.unmerged(s.worktree);
+        if (open.length > 0) throw new Error(`${open.length} file${open.length === 1 ? " has" : "s have"} unresolved conflicts. Resolve them, or run git merge --abort in the terminal.`);
       }
-      s.status = "archived";
-      s.archivedAt = Date.now();
-      save(s);
+      const previous = s.status;
+      s.status = "archiving";
+      s.statusDetail = "Archiving";
+      pushSnapshot();
+      try {
+        const runs = [...live].filter(([k]) => k.startsWith(`${id}:`)).map(([k, l]) => {
+          queues.delete(k);
+          l.handle.cancel();
+          return l.handle.finished.catch(() => null);
+        });
+        // The cancelled runs close their ledger entries and commit before the folder goes.
+        await Promise.race([Promise.all(runs), new Promise((r) => setTimeout(r, 8000))]);
+        teardownRuntime(id);
+        if (hasTree) {
+          if (p.config.archive.trim()) await startScript(s, "archive", p.config.archive).catch(() => 1);
+          scripts.delete(`${id}:archive`);
+          const before = (await G.git(["rev-parse", "HEAD"], s.worktree)).stdout.trim();
+          const status = await G.git(["status", "--porcelain"], s.worktree);
+          if (status.stdout.trim()) {
+            await commitIfDirty(s, `ceo(${s.slug}): work in progress at archive`, { noVerify: true });
+            s.wipParent = before;
+            s.wipCommit = (await G.git(["rev-parse", "HEAD"], s.worktree)).stdout.trim();
+          }
+          // Git does not hold .context. It comes back on restore.
+          const context = path.join(s.worktree, ".context");
+          const keep = contextStore(p.path, s.slug);
+          rmSync(keep, { recursive: true, force: true });
+          if (existsSync(context)) {
+            mkdirSync(path.dirname(keep), { recursive: true });
+            cpSync(context, keep, { recursive: true });
+          }
+          teardownWorktree(s.slug, {}, p.path);
+        }
+        s.status = "archived";
+        s.statusDetail = null;
+        s.archivedAt = Date.now();
+        save(s);
+      } catch (e) {
+        s.status = previous;
+        s.statusDetail = null;
+        save(s);
+        throw e;
+      }
     },
     restoreWorkspace: async ({ id }) => {
       const s = ws(id);
-      if (s.status !== "archived") return;
-      checkActiveLimit();
+      const rebuilding = s.status === "failed" && !isWorktreeRoot(s.worktree);
+      if (s.status !== "archived" && !rebuilding) return;
+      if (s.status === "archived") checkActiveLimit();
       const p = project(s.projectId);
-      provisionWorktree(s.slug, p.path);
-      if (s.wipCommit) {
-        await G.git(["reset", "--soft", s.wipCommit], s.worktree);
-        await G.git(["reset"], s.worktree);
-        s.wipCommit = null;
+      if (!(await G.git(["show-ref", "--verify", "--quiet", `refs/heads/${s.branch}`], p.path)).ok) {
+        throw new Error(`The branch ${s.branch} no longer exists, so this workspace cannot come back.`);
       }
-      s.status = "ready";
+      provisionWorktree(s.slug, p.path);
+      if (!isWorktreeRoot(s.worktree)) throw new Error("Could not recreate the worktree.");
+      if (s.wipCommit) {
+        // Only undo the archive's commit if nothing has moved the branch since.
+        const tip = (await G.git(["rev-parse", "HEAD"], s.worktree)).stdout.trim();
+        if (tip === s.wipCommit && s.wipParent) {
+          await G.git(["reset", "--soft", s.wipParent], s.worktree);
+          await G.git(["reset"], s.worktree);
+        }
+        s.wipCommit = null;
+        s.wipParent = null;
+      }
+      prepareWorktree(s, p);
+      const keep = contextStore(p.path, s.slug);
+      if (existsSync(keep)) {
+        cpSync(keep, path.join(s.worktree, ".context"), { recursive: true });
+        rmSync(keep, { recursive: true, force: true });
+      }
       s.archivedAt = null;
+      s.status = "ready";
+      s.statusDetail = null;
       await refreshGit(s);
       save(s);
+      // Ignored files such as node_modules left with the old folder. Setup builds them again.
+      void runSetup(s, p).then(() => {
+        if (stored.has(s.id) && s.status === "setup") {
+          s.status = "ready";
+          save(s);
+          drainAll(s);
+        }
+      });
     },
     deleteWorkspace: ({ id }) => {
       const s = ws(id);
-      if ([...live.keys()].some((k) => k.startsWith(`${id}:`))) throw new Error("Stop the running agent first.");
+      refuseWhileRunning(id);
+      if (s.status === "creating" || s.status === "archiving") throw new Error("Wait for this workspace to finish first.");
       const p = project(s.projectId);
+      teardownRuntime(id);
       try {
         teardownWorktree(s.slug, { deleteBranch: true }, p.path);
         if (safeAgent(s.slug, p.path)) fire(s.slug, "workspace deleted", p.path);
@@ -1139,6 +1326,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
         /* the record goes either way */
       }
       rmSync(path.join(appDir(p.path), "chat", s.slug), { recursive: true, force: true });
+      rmSync(contextStore(p.path, s.slug), { recursive: true, force: true });
       stored.delete(id);
       gitCache.delete(id);
       persist(p.path);
@@ -1193,7 +1381,8 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     diff: async ({ id, commit }): Promise<DiffResult> => {
       const s = ws(id);
-      if (!existsSync(s.worktree)) return { files: [], commits: [], truncated: false };
+      if (s.status === "archived" || s.status === "creating") return { files: [], commits: [], truncated: false };
+      ownWorktree(s);
       return G.diff(s.worktree, s.baseRef, commit);
     },
     markViewed: ({ id, path: p, hash }) => {
@@ -1202,18 +1391,27 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       else delete s.viewed[p];
       save(s);
     },
-    discardFile: async ({ id, path: rel }) => {
+    discardFile: async ({ id, path: rel, oldPath }) => {
       const s = ws(id);
-      if ([...live.keys()].some((k) => k.startsWith(`${id}:`))) throw new Error("Stop the running agent first.");
+      refuseWhileRunning(id);
+      ownWorktree(s);
       const full = G.safePath(s.worktree, rel, realpathSync);
-      const inBase = await G.git(["cat-file", "-e", `${s.baseRef}:${rel}`], s.worktree);
-      if (inBase.ok) {
-        const r = await G.git(["checkout", s.baseRef, "--", rel], s.worktree);
+      if (oldPath) G.safePath(s.worktree, oldPath, realpathSync);
+      // The version this branch started from. The base may have moved on, and its new content is not this branch's to take.
+      const mb = await G.git(["merge-base", s.baseRef, "HEAD"], s.worktree);
+      const origin = mb.ok ? mb.stdout.trim() : s.baseRef;
+      const literal = ["--literal-pathspecs"];
+      const restore = async (p: string): Promise<boolean> => {
+        if (!(await G.git(["cat-file", "-e", `${origin}:${p}`], s.worktree)).ok) return false;
+        const r = await G.git([...literal, "checkout", origin, "--", p], s.worktree);
         if (!r.ok) throw new Error(r.stderr.trim());
-      } else {
-        await G.git(["rm", "--cached", "-f", "--ignore-unmatch", "--", rel], s.worktree);
+        return true;
+      };
+      if (!(await restore(rel))) {
+        await G.git([...literal, "rm", "--cached", "-f", "--ignore-unmatch", "--", rel], s.worktree);
         rmSync(full, { force: true });
       }
+      if (oldPath) await restore(oldPath);
       await refreshGit(s);
       pushSnapshot();
     },
@@ -1231,6 +1429,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     attachFile: ({ id, name, base64 }) => {
       const s = ws(id);
+      ownWorktree(s);
       const bytes = Buffer.from(base64, "base64");
       if (bytes.length > 20 * 1024 * 1024) throw new Error("A dropped file can be 20 MB at most.");
       const clean = path.basename(name).replace(/[^\w.-]+/g, "-").replace(/^[-.]+/, "") || "file";
@@ -1245,7 +1444,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     files: async ({ id }) => {
       const s = ws(id);
-      return existsSync(s.worktree) ? G.listFiles(s.worktree, s.baseRef) : [];
+      return isWorktreeRoot(s.worktree) ? G.listFiles(s.worktree, s.baseRef) : [];
     },
     readFile: ({ id, path: rel }) => {
       const s = ws(id);
@@ -1279,8 +1478,17 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       }
       return { title: s.title.slice(0, 120), body: [summary && `## Changes\n${summary}`, provenance].filter(Boolean).join("\n\n"), base: s.baseRef.replace(/^origin\//, "") };
     },
+    pushChanges: async ({ id }) => {
+      const s = ws(id);
+      refuseWhileRunning(id);
+      await commitIfDirty(s, s.title);
+      await pushBranch(s);
+      await refreshGit(s);
+      pushSnapshot();
+    },
     createPr: async ({ id, title, body, draft }) => {
       const s = ws(id);
+      refuseWhileRunning(id);
       if (!title.trim()) throw new Error("A pull request needs a title.");
       await commitIfDirty(s, title.trim());
       await pushBranch(s);
@@ -1293,6 +1501,8 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       const number = Number(/(\d+)$/.exec(url)?.[1]);
       const pr: PullRequest = { number, url, state: "OPEN", isDraft: draft, mergeable: "UNKNOWN", reviewDecision: "" };
       s.pr = pr;
+      s.mergedAt = null;
+      s.mergedHead = null;
       append("note", s.slug, { kind: "pr", branch: s.branch, base: s.baseRef, url }, rootOf(s));
       save(s);
       return pr;
@@ -1300,28 +1510,44 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     mergePr: async ({ id, method }) => {
       const s = ws(id);
       if (!s.pr) throw new Error("This workspace has no pull request.");
+      refuseWhileRunning(id);
+      ownWorktree(s);
+      // A merge takes what the pull request has. Newer local work would be left behind and look merged.
+      const behind = await G.unpushed(s.worktree, s.pushRef ?? s.branch, s.baseRef);
+      const dirty = (await G.git(["status", "--porcelain"], s.worktree)).stdout.trim().length > 0;
+      if (behind > 0 || dirty) throw new Error("This pull request does not have the latest work. Push the changes first.");
       const r = await G.run(ghBinary(), ["pr", "merge", String(s.pr.number), `--${method}`], s.worktree, { timeout: 60000 });
       if (!r.ok) throw new Error(r.stderr.trim().split("\n").pop() ?? "gh pr merge failed.");
       s.pr.state = "MERGED";
       s.mergedAt = Date.now();
+      s.mergedHead = (await G.git(["rev-parse", "HEAD"], s.worktree)).stdout.trim();
       append("note", s.slug, { kind: "pr_merged", url: s.pr.url, method }, rootOf(s));
       save(s);
     },
     mergeLocal: async ({ id }) => {
       const s = ws(id);
       const p = project(s.projectId);
-      if ([...live.keys()].some((k) => k.startsWith(`${id}:`))) throw new Error("Stop the running agent first.");
+      refuseWhileRunning(id);
+      ownWorktree(s);
       const base = s.baseRef.replace(/^origin\//, "");
       const cur = (await G.git(["branch", "--show-current"], p.path)).stdout.trim();
       if (cur !== base) throw new Error(`The main checkout is on ${cur || "a detached HEAD"}. Switch it to ${base} to merge here.`);
+      // Someone's merge or rebase in the main checkout is theirs. Starting another, or aborting theirs, would destroy their work.
+      for (const marker of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD", "REVERT_HEAD"]) {
+        if ((await G.git(["rev-parse", "--quiet", "--verify", marker], p.path)).ok) {
+          throw new Error(`The main checkout has a ${marker.split("_")[0]!.toLowerCase().replace("cherry", "cherry-pick")} in progress. Finish it first.`);
+        }
+      }
       await commitIfDirty(s, s.title);
       const r = mergeAgentBranch(s.slug, {}, p.path);
       if (!r.ok) {
-        await G.git(["merge", "--abort"], p.path);
+        // The guard above means any merge in progress now is the one this call started.
+        if ((await G.git(["rev-parse", "--quiet", "--verify", "MERGE_HEAD"], p.path)).ok) await G.git(["merge", "--abort"], p.path);
         if (r.conflicts.length === 0) throw new Error(r.error);
         return { conflicts: r.conflicts };
       }
       s.mergedAt = Date.now();
+      s.mergedHead = (await G.git(["rev-parse", "HEAD"], s.worktree)).stdout.trim();
       await refreshGit(s);
       save(s);
       return { conflicts: [] };
@@ -1329,8 +1555,13 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     updateFromBase: async ({ id }) => {
       const s = ws(id);
       const p = project(s.projectId);
+      refuseWhileRunning(id);
+      ownWorktree(s);
+      // Already mid-merge: report it. Committing here would commit the conflict markers.
+      const open = await G.unmerged(s.worktree);
+      if (open.length > 0) return { conflicts: open };
       if (p.hasRemote) await G.git(["fetch", "origin"], p.path, { timeout: 30000 });
-      await commitIfDirty(s, `ceo(${s.slug}): save work before updating from the base`);
+      await commitIfDirty(s, `ceo(${s.slug}): save work before updating from the base`, { noVerify: true });
       const r = await G.git(["merge", "--no-edit", s.baseRef], s.worktree, { timeout: 60000 });
       if (!r.ok) {
         const u = await G.git(["diff", "--name-only", "--diff-filter=U"], s.worktree);
@@ -1346,6 +1577,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     commit: async ({ id, message }) => {
       const s = ws(id);
+      refuseWhileRunning(id);
       if (!message.trim()) throw new Error("A commit needs a message.");
       await commitIfDirty(s, message.trim());
       await refreshGit(s);
@@ -1362,6 +1594,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     runScript: ({ id, kind }) => {
       const s = ws(id);
+      ownWorktree(s);
       const p = project(s.projectId);
       const cmd = kind === "run" ? p.config.run : kind === "setup" ? p.config.setup : kind === "check" ? p.config.check : p.config.archive;
       if (!cmd.trim()) throw new Error(`This project has no ${kind} script. Add one in the project's settings.`);
@@ -1383,7 +1616,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
         return { terminalId: t.id, backlog: t.backlog };
       }
       const s = ws(id);
-      if (!existsSync(s.worktree)) throw new Error("This workspace has no worktree right now.");
+      ownWorktree(s);
       const t = terminalFor(id, s.worktree, scriptEnv(s), cols, rows);
       return { terminalId: t.id, backlog: t.backlog };
     },
@@ -1397,7 +1630,12 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     rerunRaceChecks: ({ raceId }) => {
       const race = races.get(raceId);
       if (!race) throw new Error("That race no longer exists.");
-      for (const e of race.entries) if (e.state === "passed" || e.state === "failed" || e.state === "no-check") e.state = "checking";
+      if (race.kept) throw new Error("This race is decided. The other attempts are archived.");
+      // A run that failed has no result to judge. A run cut short by the app closing may still have one.
+      for (const e of race.entries) {
+        const s = stored.get(e.workspaceId);
+        if (e.runOk || (e.state === "cancelled" && s && isWorktreeRoot(s.worktree))) e.state = "checking";
+      }
       race.settledAt = null;
       race.winnerId = null;
       settleRace(raceId);
@@ -1436,9 +1674,12 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
   };
 
-  // Periodic refresh: changes made outside the app show up on their own.
+  // Periodic refresh: changes made outside the app show up on their own. One pass at a time.
   let tick = 0;
+  let polling = false;
   const timer = setInterval(() => {
+    if (polling) return;
+    polling = true;
     tick += 1;
     void (async () => {
       for (const s of stored.values()) {
@@ -1458,7 +1699,9 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
           }
         }
       }
-    })();
+    })().finally(() => {
+      polling = false;
+    });
   }, 4000);
   timer.unref?.();
 
@@ -1468,9 +1711,9 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     }
     // What the last session left unfinished. A run cannot outlive the app.
     for (const s of stored.values()) {
-      if (s.status !== "archived" && !existsSync(s.worktree)) {
+      if (s.status !== "archived" && !isWorktreeRoot(s.worktree)) {
         s.status = "failed";
-        s.statusDetail = "The worktree is gone. Delete this workspace, or restore its branch by hand.";
+        s.statusDetail = "This workspace's worktree is missing.";
       }
       await refreshGit(s);
     }
@@ -1496,13 +1739,18 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
 
   return {
     handlers,
-    dispose: () => {
-      disposed = true;
+    dispose: async () => {
       clearInterval(timer);
-      if (snapshotTimer) clearTimeout(snapshotTimer);
-      for (const l of live.values()) l.handle.cancel();
+      const runs = [...live.values(), ...[...planners].map((handle) => ({ handle }))].map(({ handle }) => {
+        handle.cancel();
+        return handle.finished.catch(() => null);
+      });
       for (const k of scripts.keys()) stopScriptRun(k);
       for (const t of terms.values()) t.pty.kill();
+      // Long enough for cancelled runs to close their ledger entries, so their spend is on the record.
+      await Promise.race([Promise.all(runs), new Promise((r) => setTimeout(r, 2500))]);
+      disposed = true;
+      if (snapshotTimer) clearTimeout(snapshotTimer);
     },
   };
 }

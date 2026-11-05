@@ -51,7 +51,7 @@ export type LineComment = {
 
 export type Todo = { id: string; text: string; done: boolean };
 
-export type WorkspaceStatus = "creating" | "setup" | "ready" | "failed" | "archived";
+export type WorkspaceStatus = "creating" | "setup" | "ready" | "failed" | "archiving" | "archived";
 export type Activity = "idle" | "running" | "queued" | "unread" | "error";
 
 export type GitSummary = {
@@ -218,6 +218,8 @@ export type RaceEntry = {
   provider: Provider;
   model: string;
   state: "running" | "checking" | "passed" | "failed" | "no-check" | "cancelled";
+  /** Whether the agent's run itself finished. A run that failed has nothing for the check to judge. */
+  runOk: boolean;
   detail: string;
   costUsd: number;
   durationMs: number;
@@ -307,6 +309,7 @@ export type Api = {
   createWorkspace(p: NewWorkspace): Workspace;
   renameWorkspace(p: { id: string; title: string }): void;
   archiveWorkspace(p: { id: string }): void;
+  /** Brings back an archived workspace, or rebuilds the worktree of one that lost it. */
   restoreWorkspace(p: { id: string }): void;
   deleteWorkspace(p: { id: string }): void;
   setBudget(p: { id: string; budgetUsd: number }): void;
@@ -319,7 +322,7 @@ export type Api = {
   stop(p: { id: string; tabId: string }): void;
   diff(p: { id: string; commit?: string | null }): DiffResult;
   markViewed(p: { id: string; path: string; hash: string | null }): void;
-  discardFile(p: { id: string; path: string }): void;
+  discardFile(p: { id: string; path: string; oldPath?: string | null }): void;
   addComment(p: { id: string; path: string; startLine: number; endLine: number; side: "old" | "new"; text: string; excerpt: string }): LineComment;
   deleteComment(p: { id: string; commentId: string }): void;
   files(p: { id: string }): FileEntry[];
@@ -328,6 +331,7 @@ export type Api = {
   readFile(p: { id: string; path: string }): { text: string | null; binary: boolean; tooLarge: boolean };
   searchFiles(p: { id: string; query: string }): SearchHit[];
   checks(p: { id: string }): ChecksReport;
+  pushChanges(p: { id: string }): void;
   failureLog(p: { id: string; name: string }): string;
   draftPr(p: { id: string }): { title: string; body: string; base: string };
   createPr(p: { id: string; title: string; body: string; draft: boolean }): PullRequest;

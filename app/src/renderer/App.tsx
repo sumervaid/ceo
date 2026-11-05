@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
-import { bridge, call } from "./api";
+import { bridge, call, desktop } from "./api";
 import { Dialogs } from "./components/Dialogs";
 import { HistoryPage, HomePage, InsightsPage, Onboarding, RacePage, SpendPage } from "./components/Pages";
 import { addProjectFlow, Sidebar } from "./components/Sidebar";
@@ -95,11 +95,25 @@ export function App() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const sidebarWidth = useStore((s) => s.sidebarWidth);
   const setWidths = useStore((s) => s.setWidths);
+  const [bootError, setBootError] = useState<string | null>(null);
   useTheme();
 
   useEffect(() => {
-    void boot().catch((e: Error) => useStore.getState().toast(e.message, "error"));
+    void boot().catch((e: Error) => setBootError(e.message));
     const offMenu = bridge.onMenu(runAction);
+    // A link in agent output opens in the browser or nowhere. It never replaces this page.
+    const onClick = (e: MouseEvent): void => {
+      const a = (e.target as HTMLElement | null)?.closest?.("a");
+      if (!a) return;
+      e.preventDefault();
+      const href = a.getAttribute("href") ?? "";
+      if (/^https?:\/\//.test(href)) void desktop.openExternal(href);
+    };
+    // A file dropped anywhere else would navigate the window to it.
+    const stopDrop = (e: DragEvent): void => e.preventDefault();
+    document.addEventListener("click", onClick);
+    window.addEventListener("dragover", stopDrop);
+    window.addEventListener("drop", stopDrop);
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
         const s = useStore.getState();
@@ -121,11 +135,15 @@ export function App() {
     window.addEventListener("focus", onFocus);
     return () => {
       offMenu();
+      document.removeEventListener("click", onClick);
+      window.removeEventListener("dragover", stopDrop);
+      window.removeEventListener("drop", stopDrop);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("focus", onFocus);
     };
   }, []);
 
+  if (bootError) return <div className="boot"><div className="boot-error"><b>CEO could not start</b><p className="muted">{bootError}</p><button className="btn btn-default btn-md" onClick={() => window.location.reload()}>Try again</button></div></div>;
   if (!ready) return <div className="boot"><Spinner size={18} /></div>;
 
   const needsOnboarding = !settings?.onboarded && (projects.length === 0 || !readiness.some((r) => r.ready));

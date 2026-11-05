@@ -4,12 +4,13 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 
-import { parsePorcelain } from "./git.js";
+import { commitAgentWork, isWorktreeRoot, parsePorcelain, worktreeStatus } from "./git.js";
 import { initLedger, readLedger, verify } from "./ledger.js";
 import { findAgent, hire, reconfigure, setBudget } from "./roster.js";
 
@@ -43,4 +44,21 @@ test("moving an agent to another provider keeps its brief, budget, level and spe
 test("a status line that lost its leading column keeps its whole path", () => {
   assert.deepEqual(parsePorcelain("M README.md\n M src/a.ts\n?? new file.txt\nA  b.ts"), ["README.md", "src/a.ts", "new file.txt", "b.ts"]);
   assert.deepEqual(parsePorcelain(""), []);
+});
+
+test("a plain folder inside the repo is not a worktree, so an agent never runs or commits there", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ceo-wt-"));
+  try {
+    const g = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
+    g("init", "-b", "main");
+    g("-c", "user.name=T", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "first");
+    assert.equal(isWorktreeRoot(dir), true);
+    const fake = path.join(dir, ".ceo", "worktrees", "ghost");
+    mkdirSync(fake, { recursive: true });
+    assert.equal(isWorktreeRoot(fake), false);
+    assert.deepEqual(worktreeStatus("ghost", dir), []);
+    assert.throws(() => commitAgentWork("ghost", "m", { ledgerSeq: 0, costUsd: 0 }, dir), /no worktree/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

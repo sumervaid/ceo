@@ -42,7 +42,7 @@ describe("license", () => {
 
 const G = { added: 1, removed: 0, files: 1, ahead: 1, behind: 0, dirty: false, conflicts: [] as string[] };
 const PR = { number: 1, url: "u", state: "OPEN" as const, isDraft: false, mergeable: "MERGEABLE", reviewDecision: "" };
-const base = { running: false, hasRemote: true, ghReady: true, git: G, pr: null, runs: [], reviews: [], merged: false };
+const base = { running: false, hasRemote: true, ghReady: true, git: G, pr: null, runs: [], reviews: [], merged: false, unpushed: 0 };
 
 describe("next action", () => {
   it("follows the path from no change to archive", () => {
@@ -56,6 +56,14 @@ describe("next action", () => {
     expect(decideNext({ ...base, pr: PR, runs: [{ name: "ci", state: "running", url: null, detail: null }] }).next).toBe("wait");
     expect(decideNext({ ...base, pr: PR }).next).toBe("merge");
     expect(decideNext({ ...base, pr: { ...PR, state: "MERGED" } }).next).toBe("archive");
+  });
+  it("puts unpushed work ahead of CI, reviews and merge, and never calls it merged", () => {
+    const failing = [{ name: "ci", state: "fail" as const, url: null, detail: null }];
+    expect(decideNext({ ...base, pr: PR, runs: failing, unpushed: 1 }).next).toBe("update");
+    expect(decideNext({ ...base, pr: PR, unpushed: 1 }).next).toBe("update");
+    expect(decideNext({ ...base, pr: PR, git: { ...G, dirty: true } }).next).toBe("update");
+    expect(decideNext({ ...base, pr: { ...PR, state: "MERGED" }, unpushed: 2 }).next).toBe("create-pr");
+    expect(decideNext({ ...base, hasRemote: false, merged: true, unpushed: 1 }).next).toBe("merge-local");
   });
 });
 

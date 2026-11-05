@@ -29,7 +29,8 @@ export function Spinner({ size = 12 }: { size?: number }) {
 export function Dialog({ title, subtitle, children, footer, onClose, width = 560, testId }: { title: ReactNode; subtitle?: ReactNode; children: ReactNode; footer?: ReactNode; onClose: () => void; width?: number; testId?: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") {
+      // Inside a terminal, Escape belongs to the program running there.
+      if (e.key === "Escape" && !(e.target as HTMLElement | null)?.closest?.(".term")) {
         e.stopPropagation();
         onClose();
       }

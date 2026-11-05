@@ -347,9 +347,11 @@ function CreatePrDialog({ id, onClose }: { id: string; onClose: () => void }) {
 function ProjectDialog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const project = useStore((s) => s.snapshot.projects.find((p) => p.id === projectId));
   const [c, setC] = useState(project?.config);
+  // Held as typed. Splitting on every keystroke would swallow the comma before the next name.
+  const [copy, setCopy] = useState(project?.config.copy.join(", ") ?? "");
   if (!project || !c) return null;
   const save = (): void => void act(async () => {
-    await call("saveProjectConfig", { projectId, config: c });
+    await call("saveProjectConfig", { projectId, config: { ...c, copy: copy.split(",").map((x) => x.trim()).filter(Boolean) } });
     onClose();
   }, "Saved");
   const row = (k: "setup" | "run" | "check" | "archive", label: string, hint: string, ph: string) => (
@@ -375,7 +377,7 @@ function ProjectDialog({ projectId, onClose }: { projectId: string; onClose: () 
       {row("archive", "Archive script", "Runs before a workspace is archived.", "docker compose down")}
       <div className="form-row">
         <Field label="Base branch" hint="New work branches from here."><input className="input mono" value={c.baseBranch} placeholder={project.baseRef} onChange={(e) => setC({ ...c, baseBranch: e.target.value })} /></Field>
-        <Field label="Copy into new workspaces" hint="Files git ignores, comma separated."><input className="input mono" value={c.copy.join(", ")} onChange={(e) => setC({ ...c, copy: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} /></Field>
+        <Field label="Copy into new workspaces" hint="Files git ignores, comma separated."><input className="input mono" value={copy} onChange={(e) => setCopy(e.target.value)} /></Field>
       </div>
       <Field label="Guidance for every agent" hint="Conventions and limits for this project. Applies to new workspaces.">
         <textarea className="input" rows={4} value={c.instructions} onChange={(e) => setC({ ...c, instructions: e.target.value })} />

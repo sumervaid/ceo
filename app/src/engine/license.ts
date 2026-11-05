@@ -6,9 +6,10 @@ import { createPublicKey, verify } from "node:crypto";
 
 import type { LicenseState } from "../shared/api";
 
-/** Written by `npm run license:keygen`. Replace before the first paid release. */
+/** Written by `npm run license:keygen`. The matching private key signs every license, and stays out of git. */
 export const LICENSE_PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAg1txuRT7auRKkJ3mO0dlwjWkWDl7kjv0mFCSa6vFklE=\n-----END PUBLIC KEY-----";
-export const CHECKOUT_URL = process.env.CEO_CHECKOUT_URL ?? "";
+/** Set at build time. A Finder launch has no environment to read it from. */
+export const CHECKOUT_URL: string = process.env.CEO_CHECKOUT_URL ?? "";
 export const TRIAL_DAYS = 14;
 export const FREE_ACTIVE_WORKSPACES = 3;
 

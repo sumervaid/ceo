@@ -133,12 +133,17 @@ export function end(
   if (record?.isolated && record.worktreePath) {
     const dirty = worktreeStatus(handle.agent, cwd);
     if (dirty.length > 0) {
-      commit = commitAgentWork(
-        handle.agent,
-        `ceo(${handle.agent}): ${handle.task.slice(0, 60)}`,
-        { ledgerSeq: endEntry.seq, costUsd: cost.costUsd },
-        cwd,
-      );
+      // A failed commit leaves the work in the worktree. The run itself is over and paid for, so it still ends.
+      try {
+        commit = commitAgentWork(
+          handle.agent,
+          `ceo(${handle.agent}): ${handle.task.slice(0, 60)}`,
+          { ledgerSeq: endEntry.seq, costUsd: cost.costUsd },
+          cwd,
+        );
+      } catch (e) {
+        append("note", handle.agent, { kind: "commit_failed", delegationId: handle.id, detail: e instanceof Error ? e.message : String(e) }, cwd);
+      }
     }
   }
 

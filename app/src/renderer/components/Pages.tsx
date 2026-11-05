@@ -206,7 +206,7 @@ export function RacePage({ race }: { race: Race }) {
     <PageShell
       title={<><Flag size={15} className="title-ic" /> {race.title}</>}
       subtitle={race.check ? <>Check: <code>{race.check}</code></> : "No check. Compare and choose."}
-      actions={race.settledAt && race.check ? <Button size="sm" icon={<RefreshCw size={13} />} onClick={() => void act(() => call("rerunRaceChecks", { raceId: race.id }))}>Run the check again</Button> : undefined}
+      actions={race.settledAt && race.check && !race.kept ? <Button size="sm" icon={<RefreshCw size={13} />} onClick={() => void act(() => call("rerunRaceChecks", { raceId: race.id }))}>Run the check again</Button> : undefined}
     >
       <div className={`race-banner ${best ? "race-won" : running ? "" : "race-none"}`} data-testid="race-banner">
         {running ? <><Spinner size={14} /> {race.entries.filter((e) => e.state === "running").length} of {race.entries.length} agents still working</> : best ? <><Trophy size={16} /> {race.note}</> : <>{race.note}</>}

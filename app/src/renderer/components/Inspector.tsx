@@ -20,9 +20,10 @@ function sendToAgent(w: Workspace, label: string, text: string, message: string)
 }
 
 function Changes({ w }: { w: Workspace }) {
-  const { diff } = useDiff(w.id, null);
+  const { diff, error } = useDiff(w.id, null);
   const setReview = useStore((s) => s.setReview);
   const files = diff?.files ?? [];
+  if (error) return <Empty icon={<FileText size={18} />} title="Could not read the changes">{error}</Empty>;
   if (!diff) return <div className="center"><Spinner size={16} /></div>;
   if (files.length === 0) {
     return <Empty icon={<FileText size={18} />} title="No changes yet">Files the agent changes show up here.</Empty>;
@@ -324,7 +325,7 @@ export function runNextAction(w: Workspace, report: ChecksReport): void {
       sendToAgent(w, "Review comments", report.reviews.map((n) => `${n.author}${n.path ? ` on ${n.path}${n.line ? `:${n.line}` : ""}` : ""}: ${n.body}`).join("\n\n"), "Address these review comments.");
       break;
     case "update":
-      void act(() => call("commit", { id: w.id, message: w.title }), "Committed");
+      void act(() => call("pushChanges", { id: w.id }), "Pushed to the pull request");
       break;
     case "archive":
       void act(() => call("archiveWorkspace", { id: w.id }), `Archived ${w.title}`);

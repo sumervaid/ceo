@@ -119,7 +119,7 @@ function TopBar({ w }: { w: Workspace }) {
               : []),
             {
               icon: <Trash2 size={13} />, label: "Delete", danger: true,
-              onClick: () => open({ kind: "confirm", title: `Delete ${w.title}?`, body: `The branch ${w.branch}, its worktree and this chat are removed. The ledger keeps its record of the spend. This cannot be undone.`, action: "Delete", danger: true, run: () => void act(async () => { await call("deleteWorkspace", { id: w.id }); setPage({ kind: "home" }); }) }),
+              onClick: () => open({ kind: "confirm", title: `Delete ${w.title}?`, body: `${w.git.ahead > 0 && !w.mergedAt ? `${w.git.ahead} commit${w.git.ahead === 1 ? " is" : "s are"} on this branch and not merged. ` : ""}The branch ${w.branch}, its worktree and this chat are removed. The ledger keeps its record of the spend. This cannot be undone.`, action: "Delete", danger: true, run: () => void act(async () => { await call("deleteWorkspace", { id: w.id }); setPage({ kind: "home" }); }) }),
             },
           ]}
         />
@@ -139,6 +139,13 @@ export function WorkspaceView({ w }: { w: Workspace }) {
     <div className="main">
       <TopBar w={w} />
       {(w.status === "creating" || w.status === "setup") && <div className="banner" data-testid="banner-creating"><Spinner size={11} /> {w.statusDetail ?? "Preparing"}. Messages sent now start when this finishes.</div>}
+      {w.status === "failed" && (
+        <div className="banner banner-warn" data-testid="banner-failed">
+          {w.statusDetail ?? "This workspace could not start."}
+          <button className="link" data-testid="recreate" onClick={() => void act(() => call("restoreWorkspace", { id: w.id }), "Worktree recreated")}>Recreate the worktree</button>
+        </div>
+      )}
+      {w.status === "archiving" && <div className="banner"><Spinner size={11} /> Archiving</div>}
       {w.status === "ready" && w.statusDetail && <div className="banner banner-warn">{w.statusDetail}. <button className="link" onClick={() => useStore.getState().setInspector("run")}>See the log</button></div>}
       <div className="workspace">
         <Chat w={w} />

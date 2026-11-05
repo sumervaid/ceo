@@ -370,3 +370,34 @@ test("a file dropped on the composer lands in .context and reaches the agent", a
   expect(readFileSync(path.join(repo, ".ceo/worktrees/vega/.context/attachments/shot-one.png"), "utf8")).toBe("hello from a screenshot");
   await app.close();
 });
+
+test("hostile agent output cannot run script or take over the window", async () => {
+  const script = path.join(os.tmpdir(), `ceo-hostile-${process.pid}.json`);
+  const reply = ["Links:", "[relative](src/engine.ts)", "[up](../../evil.html)", "[js](javascript:window.__pwned=1)", '<img src=x onerror="window.__pwned=2">', "<script>window.__pwned=3</script>", '<a href="file:///etc/hosts">file</a>'].join("\n\n");
+  writeFileSync(script, JSON.stringify([{ match: "show links", reply }]));
+  const l = await launch({ STUB_CHAT: script, CEO_CLAUDE_BIN: path.resolve(__dirname, "../../../tools/stub-claude") });
+  const { app, page } = l;
+  await expect(page.getByTestId("onboarding")).toBeVisible({ timeout: 20000 });
+  const repo = makeRepo(l.dir);
+  await add(page, repo);
+  await page.reload();
+  await page.getByTestId("home-new").click();
+  await page.getByTestId("new-prompt").fill("show links");
+  await page.getByTestId("create-workspace").click();
+  await expect(page.getByTestId("transcript")).toContainText("Links:", { timeout: 25000 });
+  await expect(page.locator(".msg-agent a").first()).toBeVisible();
+  const url = page.url();
+  for (const a of await page.locator(".msg-agent a").all()) await a.click();
+  await page.waitForTimeout(500);
+  expect(page.url()).toBe(url);
+  await expect(page.getByTestId("composer")).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(["<script>1</script>"], "x.html", { type: "text/html" }));
+    document.body.dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+  });
+  await page.waitForTimeout(300);
+  expect(page.url()).toBe(url);
+  await app.close();
+});

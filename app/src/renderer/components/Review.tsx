@@ -12,10 +12,14 @@ import { Button, Empty, Kbd, Menu, Select, Spinner } from "./ui";
 
 type Selection = { path: string; side: "old" | "new"; from: number; to: number };
 
-export function useDiff(id: string, commit: string | null, poll = true): { diff: DiffResult | null; reload: () => void } {
+export function useDiff(id: string, commit: string | null, poll = true): { diff: DiffResult | null; error: string | null; reload: () => void } {
   const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
-    void call("diff", { id, commit }).then(setDiff).catch(() => setDiff({ files: [], commits: [], truncated: false }));
+    void call("diff", { id, commit }).then((d) => {
+      setDiff(d);
+      setError(null);
+    }).catch((e: Error) => setError(e.message));
   }, [id, commit]);
   useEffect(() => {
     load();
@@ -23,7 +27,7 @@ export function useDiff(id: string, commit: string | null, poll = true): { diff:
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [load, poll]);
-  return { diff, reload: load };
+  return { diff, error, reload: load };
 }
 
 function statusIcon(f: DiffFile) {
@@ -181,7 +185,7 @@ function FileDiff({ w, f, layout, viewed, collapsed, onCollapse, onViewed, canDi
         <span className="df-stat"><em className="add">+{f.added}</em> <em className="del">−{f.removed}</em></span>
         <span className="df-spacer" />
         {canDiscard && (
-          <button className="df-btn" title="Discard this file's changes" onClick={() => open({ kind: "confirm", title: `Discard changes to ${f.path}?`, body: "The file goes back to the base branch's version. This cannot be undone.", action: "Discard", danger: true, run: () => void act(async () => { await call("discardFile", { id: w.id, path: f.path }); reload(); }) })}>
+          <button className="df-btn" title="Discard this file's changes" onClick={() => open({ kind: "confirm", title: `Discard changes to ${f.path}?`, body: f.oldPath ? `The file goes back to its old name, ${f.oldPath}, and to the version this branch started from. This cannot be undone.` : "The file goes back to the version this branch started from. This cannot be undone.", action: "Discard", danger: true, run: () => void act(async () => { await call("discardFile", { id: w.id, path: f.path, oldPath: f.oldPath }); reload(); }) })}>
             <Undo2 size={13} />
           </button>
         )}
@@ -250,7 +254,7 @@ export function Review({ w }: { w: Workspace }) {
       return "unified";
     }
   });
-  const { diff, reload } = useDiff(w.id, commit);
+  const { diff, error, reload } = useDiff(w.id, commit);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [current, setCurrent] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
@@ -281,7 +285,8 @@ export function Review({ w }: { w: Workspace }) {
     const onKey = (e: KeyboardEvent): void => {
       const t = e.target as HTMLElement;
       if (t.tagName === "TEXTAREA" || t.tagName === "INPUT") return;
-      if (useStore.getState().dialog) return;
+      if (useStore.getState().dialog || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (t.closest(".menu-wrap")) return;
       if (e.key === "Escape") setReview(null);
       if (e.key === "j" || e.key === "n") { const f = files[Math.min(current + 1, files.length - 1)]; if (f) jump(f.path); }
       if (e.key === "k" || e.key === "p") { const f = files[Math.max(current - 1, 0)]; if (f) jump(f.path); }
@@ -351,8 +356,9 @@ export function Review({ w }: { w: Workspace }) {
           <div className="review-keys"><Kbd>j</Kbd><Kbd>k</Kbd> move <Kbd>v</Kbd> viewed <Kbd>esc</Kbd> back</div>
         </nav>
         <div className="review-main" ref={scroller}>
-          {!diff && <div className="center"><Spinner size={18} /></div>}
-          {diff && files.length === 0 && <Empty title="No changes yet" icon={<FileText size={20} />}>This branch matches {w.baseRef}.</Empty>}
+          {error && <Empty title="Could not read the changes" icon={<FileText size={20} />}>{error}</Empty>}
+          {!diff && !error && <div className="center"><Spinner size={18} /></div>}
+          {diff && !error && files.length === 0 && <Empty title="No changes yet" icon={<FileText size={20} />}>This branch matches {w.baseRef}.</Empty>}
           {diff?.truncated && <div className="df-note">Showing the first {files.length} files.</div>}
           {files.map((f) => (
             <FileDiff

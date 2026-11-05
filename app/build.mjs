@@ -25,6 +25,12 @@ await Promise.all([
   build({ ...common, entryPoints: ["src/main/index.ts"], outfile: "out/main.cjs", external: ["electron"] }),
   // The preload runs sandboxed, with no node modules, so it takes no import.meta shim.
   build({ ...common, banner: {}, define: {}, entryPoints: ["src/main/preload.ts"], outfile: "out/preload.cjs", external: ["electron"] }),
-  build({ ...common, entryPoints: ["src/engine/index.ts"], outfile: "out/engine.cjs", external: ["electron", "node-pty"] }),
+  build({
+    ...common,
+    entryPoints: ["src/engine/index.ts"],
+    outfile: "out/engine.cjs",
+    external: ["electron", "node-pty"],
+    define: { ...common.define, "process.env.CEO_CHECKOUT_URL": JSON.stringify(process.env.CEO_CHECKOUT_URL ?? "") },
+  }),
   build({ ...common, entryPoints: ["../src/mcp/collab-index.ts"], outfile: "out/collab.cjs" }),
 ]);

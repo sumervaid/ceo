@@ -33,7 +33,7 @@ const URL = "https://github.com/acme/orbit/pull/12";
     write({ ...s, pr: { ...s.pr, state: "MERGED", method: args[3] } });
     return;
   }
-  if (args[0] === "pr" && args[1] === "list") return out([]);
+  if (args[0] === "pr" && args[1] === "list") return out(s.pr?.state === "OPEN" ? [{ number: 12 }] : []);
   process.stderr.write(`stub-gh-pr: no answer for ${args.join(" ")}\n`);
   process.exit(1);
 })();

@@ -1,5 +1,5 @@
 /** Git for the window: asynchronous, so a large repo never stalls a click. */
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, appendFileSync, mkdirSync, statSync } from "node:fs";
 import * as path from "node:path";
@@ -23,8 +23,9 @@ export function run(cmd: string, args: string[], cwd: string, opts: { timeout?: 
   });
 }
 
+/** Optional locks stay off, so a background read never holds index.lock against an agent's commit. */
 export const git = (args: string[], cwd: string, opts: Parameters<typeof run>[3] = {}): Promise<Out> =>
-  run("git", ["-c", "core.quotepath=off", ...args], cwd, opts);
+  run("git", ["-c", "core.quotepath=off", ...args], cwd, { ...opts, env: { ...(opts.env ?? process.env), GIT_OPTIONAL_LOCKS: "0" } });
 
 const EMPTY: GitSummary = { added: 0, removed: 0, files: 0, ahead: 0, behind: 0, dirty: false, conflicts: [] };
 
@@ -63,11 +64,11 @@ export async function defaultBase(dir: string, chosen = ""): Promise<string> {
 
 /** Paths CEO writes into a worktree that never belong in a commit. Local to the clone, no tracked file changes. */
 export function excludeLocal(root: string, lines: string[]): void {
-  const dir = path.join(root, ".git", "info");
-  if (!existsSync(path.join(root, ".git"))) return;
   try {
-    mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, "exclude");
+    // A linked worktree or a submodule has a .git file, not a folder. Git knows where its exclude file lives.
+    const raw = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const file = path.resolve(root, raw);
+    mkdirSync(path.dirname(file), { recursive: true });
     const current = existsSync(file) ? readFileSync(file, "utf8") : "";
     const missing = lines.filter((l) => !current.split("\n").includes(l));
     if (missing.length) appendFileSync(file, `${current && !current.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`);
@@ -121,8 +122,23 @@ export async function summary(worktree: string, base: string): Promise<GitSummar
   const counts = await git(["rev-list", "--left-right", "--count", `${base}...HEAD`], worktree);
   const [behind, ahead] = counts.ok ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
   const status = await git(["status", "--porcelain"], worktree);
-  const conflicts = await conflictsWith(worktree, base);
+  const merging = await unmerged(worktree);
+  const conflicts = [...new Set([...merging, ...(await conflictsWith(worktree, base))])];
   return { added, removed, files, ahead: ahead ?? 0, behind: behind ?? 0, dirty: status.ok && status.stdout.trim().length > 0, conflicts };
+}
+
+/** Files with unresolved conflicts right now, from a merge in progress. */
+export async function unmerged(worktree: string): Promise<string[]> {
+  const r = await git(["diff", "--name-only", "--diff-filter=U"], worktree);
+  return r.ok ? r.stdout.split("\n").filter(Boolean) : [];
+}
+
+/** Commits on this branch that its remote branch does not have. A branch never pushed counts all of its own. */
+export async function unpushed(worktree: string, remoteBranch: string, base: string): Promise<number> {
+  const known = await git(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${remoteBranch}`], worktree);
+  const range = known.ok ? `origin/${remoteBranch}..HEAD` : `${base}..HEAD`;
+  const r = await git(["rev-list", "--count", range], worktree);
+  return r.ok ? Number(r.stdout.trim()) || 0 : 0;
 }
 
 /** Files that would conflict if the branch merged with the base now. Nothing on disk changes. */
@@ -157,8 +173,8 @@ export function parsePatch(text: string): DiffFile[] {
       const l = lines[i]!;
       if (l.startsWith("new file")) status = "added";
       else if (l.startsWith("deleted file")) status = "deleted";
-      else if (l.startsWith("rename from ")) renameFrom = l.slice(12);
-      else if (l.startsWith("rename to ")) renameTo = l.slice(10);
+      else if (l.startsWith("rename from ")) renameFrom = unquote(l.slice(12));
+      else if (l.startsWith("rename to ")) renameTo = unquote(l.slice(10));
       else if (l.startsWith("--- ")) oldPath = l === "--- /dev/null" ? null : stripPrefix(l.slice(4));
       else if (l.startsWith("+++ ")) newPath = l === "+++ /dev/null" ? null : stripPrefix(l.slice(4));
       else if (l.startsWith("Binary files ") || l.startsWith("GIT binary patch")) binary = true;
@@ -166,9 +182,9 @@ export function parsePatch(text: string): DiffFile[] {
     }
     if (renameFrom) status = "renamed";
     if (!newPath && !oldPath) {
-      const m = /^diff --git a\/(.*) b\/(.*)$/.exec(lines[start]!);
-      newPath = renameTo ?? m?.[2] ?? "";
-      oldPath = renameFrom ?? m?.[1] ?? null;
+      const m = /^diff --git "?a\/(.*?)"? "?b\/(.*?)"?$/.exec(lines[start]!);
+      newPath = renameTo ?? (m?.[2] ? unquote(m[2]) : "");
+      oldPath = renameFrom ?? (m?.[1] ? unquote(m[1]) : null);
     }
     const hunks: DiffHunk[] = [];
     let added = 0;
@@ -219,8 +235,31 @@ export function parsePatch(text: string): DiffFile[] {
 }
 
 function stripPrefix(p: string): string {
-  const clean = p.replace(/\t.*$/, "");
+  const clean = unquote(p.replace(/\t.*$/, ""));
   return clean.startsWith("a/") || clean.startsWith("b/") ? clean.slice(2) : clean;
+}
+
+/** Git puts unusual names in double quotes with C escapes. */
+export function unquote(p: string): string {
+  if (!(p.startsWith('"') && p.endsWith('"'))) return p;
+  const body = p.slice(1, -1);
+  const bytes: number[] = [];
+  const simple: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== "\\") {
+      bytes.push(...Buffer.from(body[i]!, "utf8"));
+      continue;
+    }
+    const octal = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (octal) {
+      bytes.push(parseInt(octal[0], 8));
+      i += 3;
+    } else {
+      bytes.push(simple[body[i + 1]!] ?? body.charCodeAt(i + 1));
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
 }
 
 export async function commits(worktree: string, base: string): Promise<Commit[]> {
@@ -234,17 +273,21 @@ export async function commits(worktree: string, base: string): Promise<Commit[]>
 
 export async function diff(worktree: string, base: string, commit?: string | null): Promise<DiffResult> {
   const log = await commits(worktree, base);
-  const flags = ["--no-color", "--no-ext-diff", "-M", "-U3"];
+  // Fixed prefixes, whatever diff.noprefix or diff.mnemonicPrefix say in this person's config.
+  const flags = ["--no-color", "--no-ext-diff", "-M", "-U3", "--src-prefix=a/", "--dst-prefix=b/"];
   if (commit) {
     if (!log.some((c) => c.sha === commit)) throw new Error("That commit is not on this workspace's branch.");
     const r = await git(["show", ...flags, "--format=", commit], worktree);
+    if (!r.ok) throw new Error(`git show failed: ${r.stderr.trim().split("\n").pop() ?? ""}`);
     return { files: parsePatch(r.stdout), commits: log, truncated: false };
   }
   let r = await git(["diff", ...flags, "--merge-base", base], worktree);
   if (!r.ok) r = await git(["diff", ...flags, base], worktree);
+  // An empty list reads as no changes, and someone could delete real work on the strength of that.
+  if (!r.ok) throw new Error(`Could not read the changes: ${r.stderr.trim().split("\n").pop() ?? "git diff failed"}`);
   const files = parsePatch(r.stdout);
   for (const f of await untracked(worktree)) {
-    const full = await git(["diff", "--no-color", "--no-index", "--", "/dev/null", f], worktree);
+    const full = await git(["diff", "--no-color", "--no-index", "--src-prefix=a/", "--dst-prefix=b/", "--", "/dev/null", f], worktree);
     const parsed = parsePatch(full.stdout)[0];
     if (parsed) files.push({ ...parsed, path: f, status: "added" });
   }

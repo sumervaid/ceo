@@ -19,8 +19,7 @@ port.on("message", async ({ data }) => {
 });
 
 process.on("SIGTERM", () => {
-  dispose();
-  process.exit(0);
+  void dispose().finally(() => process.exit(0));
 });
 process.on("uncaughtException", (e) => {
   process.stderr.write(`engine: ${e.stack ?? e.message}\n`);
