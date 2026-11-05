@@ -138,7 +138,7 @@ export function WorkspaceView({ w }: { w: Workspace }) {
   return (
     <div className="main">
       <TopBar w={w} />
-      {(w.status === "creating" || w.status === "setup") && <div className="banner"><Spinner size={11} /> {w.statusDetail ?? "Preparing"}. Messages sent now start when this finishes.</div>}
+      {(w.status === "creating" || w.status === "setup") && <div className="banner" data-testid="banner-creating"><Spinner size={11} /> {w.statusDetail ?? "Preparing"}. Messages sent now start when this finishes.</div>}
       {w.status === "ready" && w.statusDetail && <div className="banner banner-warn">{w.statusDetail}. <button className="link" onClick={() => useStore.getState().setInspector("run")}>See the log</button></div>}
       <div className="workspace">
         <Chat w={w} />

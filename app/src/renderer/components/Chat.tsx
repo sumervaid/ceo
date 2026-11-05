@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowUp, ChevronRight, FileText, MessageSquare, Paperclip, ShieldAlert, Square, TerminalSquare, Wrench, X, Plus, RotateCcw, Hammer, ListChecks,
+  ArrowUp, ChevronRight, FileText, MessageSquare, ShieldAlert, Square, TerminalSquare, Wrench, X, Plus, RotateCcw, Hammer, ListChecks,
 } from "lucide-react";
 
 import type { ChatAttachment, ChatItem, ChatTab, FileEntry, Mode, Provider, Workspace } from "../../shared/api";
@@ -179,6 +179,7 @@ function Composer({ w, tab }: { w: Workspace; tab: ChatTab }) {
   const area = useRef<HTMLTextAreaElement>(null);
   const [files, setFiles] = useState<FileEntry[] | null>(null);
   const [mention, setMention] = useState<{ query: string; start: number; index: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     area.current?.focus();
@@ -217,6 +218,20 @@ function Composer({ w, tab }: { w: Workspace; tab: ChatTab }) {
     area.current?.focus();
   };
 
+  const attach = (list: File[]): void => {
+    for (const file of list) {
+      void act(async () => {
+        if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} is over the 20 MB limit.`);
+        const buf = new Uint8Array(await file.arrayBuffer());
+        let binary = "";
+        for (let i = 0; i < buf.length; i += 32768) binary += String.fromCharCode(...buf.subarray(i, i + 32768));
+        const saved = await call("attachFile", { id: w.id, name: file.name || "pasted.png", base64: btoa(binary) });
+        const cur = useStore.getState().drafts[key];
+        setDraft(key, { attachments: [...(cur?.attachments ?? []), { kind: "file", path: saved.path }] });
+      });
+    }
+  };
+
   const submit = (): void => {
     if (!text.trim() && attachments.length === 0) return;
     setDraft(key, { text: "", attachments: [] });
@@ -241,7 +256,17 @@ function Composer({ w, tab }: { w: Workspace; tab: ChatTab }) {
           This workspace reached its {money(w.budgetUsd)} budget. Raise by $25
         </button>
       )}
-      <div className={`composer ${tab.mode === "plan" ? "composer-plan" : ""}`} data-testid="composer">
+      <div
+        className={`composer ${tab.mode === "plan" ? "composer-plan" : ""} ${dragging ? "composer-drop" : ""}`}
+        data-testid="composer"
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          if (w.status !== "archived") attach([...e.dataTransfer.files]);
+        }}
+      >
         {mention && matches.length > 0 && (
           <div className="mention">
             {matches.map((f, i) => (
@@ -266,6 +291,13 @@ function Composer({ w, tab }: { w: Workspace; tab: ChatTab }) {
           disabled={w.status === "archived"}
           data-testid="composer-input"
           onChange={(e) => onChange(e.target.value, e.target.selectionStart)}
+          onPaste={(e) => {
+            const pasted = [...e.clipboardData.files];
+            if (pasted.length > 0) {
+              e.preventDefault();
+              attach(pasted);
+            }
+          }}
           onKeyDown={(e) => {
             if (mention && matches.length > 0) {
               if (e.key === "ArrowDown") { e.preventDefault(); setMention({ ...mention, index: (mention.index + 1) % matches.length }); return; }
@@ -317,7 +349,7 @@ function Composer({ w, tab }: { w: Workspace; tab: ChatTab }) {
           <Button tone="accent" size="sm" aria-label="Send" title={`Send · ${mod("↵")}`} disabled={!text.trim() && attachments.length === 0} icon={<ArrowUp size={14} />} onClick={submit} data-testid="send" />
         </div>
       </div>
-      <div className="composer-hint"><Kbd>↵</Kbd> send <Kbd>⇧↵</Kbd> new line <Paperclip size={10} /> <Kbd>@</Kbd> file</div>
+      <div className="composer-hint"><Kbd>↵</Kbd> send <Kbd>⇧↵</Kbd> new line <Kbd>@</Kbd> file <span>Drop or paste files and screenshots</span></div>
     </div>
   );
 }

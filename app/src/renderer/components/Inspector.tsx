@@ -314,7 +314,11 @@ export function runNextAction(w: Workspace, report: ChecksReport): void {
       sendToAgent(w, "", "", `This branch conflicts with ${w.baseRef} in: ${report.git.conflicts.join(", ")}. Merge ${w.baseRef} into this branch, resolve each conflict correctly, run the tests and commit.`);
       break;
     case "fix-checks":
-      s.setInspector("checks");
+      void act(async () => {
+        const failing = report.runs.filter((r) => r.state === "fail");
+        const logs = await Promise.all(failing.map(async (r) => `${r.name}:\n${await call("failureLog", { id: w.id, name: r.name })}`));
+        sendToAgent(w, "Failing checks", logs.join("\n\n"), `${failing.map((r) => r.name).join(", ")} ${failing.length === 1 ? "is" : "are"} failing. Find the cause and fix it.`);
+      });
       break;
     case "respond":
       sendToAgent(w, "Review comments", report.reviews.map((n) => `${n.author}${n.path ? ` on ${n.path}${n.line ? `:${n.line}` : ""}` : ""}: ${n.body}`).join("\n\n"), "Address these review comments.");

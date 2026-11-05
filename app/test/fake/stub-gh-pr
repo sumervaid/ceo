@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+// A GitHub CLI with one pull request and state on disk, so the whole path from PR to merge runs for free.
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const STATE = process.env.STUB_GH_STATE;
+const read = () => { try { return JSON.parse(fs.readFileSync(STATE, "utf8")); } catch { return { pr: null, ciFails: true, reviewed: true }; } };
+const write = (s) => fs.writeFileSync(STATE, JSON.stringify(s));
+const out = (o) => process.stdout.write(typeof o === "string" ? `${o}\n` : `${JSON.stringify(o)}\n`);
+const flag = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
+const s = read();
+const URL = "https://github.com/acme/orbit/pull/12";
+(async () => {
+  if (args[0] === "--version") return out("gh version 2.85.0 (stub)");
+  if (args[0] === "auth") return;
+  if (args[0] === "pr" && args[1] === "create") {
+    let body = "";
+    for await (const c of process.stdin) body += c;
+    write({ ...s, pr: { number: 12, title: flag("--title"), body, head: flag("--head"), base: flag("--base"), state: "OPEN" } });
+    return out(URL);
+  }
+  if (args[0] === "pr" && args[1] === "view") {
+    if (!s.pr) { process.stderr.write("no pull requests found\n"); process.exit(1); }
+    if (flag("--json") === "reviews") return out({ reviews: s.reviewed ? [{ id: "r1", author: { login: "maria" }, body: "Please add a jitter test." }] : [] });
+    return out({ number: 12, url: URL, state: s.pr.state, isDraft: false, mergeable: "MERGEABLE", reviewDecision: s.reviewed ? "CHANGES_REQUESTED" : "APPROVED",
+      statusCheckRollup: [
+        { name: "unit tests", status: "COMPLETED", conclusion: s.ciFails ? "FAILURE" : "SUCCESS", detailsUrl: "https://github.com/acme/orbit/actions/runs/777/job/1", workflowName: "CI" },
+        { name: "lint", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://github.com/acme/orbit/actions/runs/778/job/1", workflowName: "CI" },
+      ] });
+  }
+  if (args[0] === "api") return out(s.reviewed ? [{ id: 91, user: { login: "maria" }, body: "Off by one here.", path: "src/retry.ts", line: 12, html_url: `${URL}#d91` }] : []);
+  if (args[0] === "run" && args[1] === "view") return out("FAIL test/retry.test.ts\n  expected 3 attempts, got 2");
+  if (args[0] === "pr" && args[1] === "merge") {
+    write({ ...s, pr: { ...s.pr, state: "MERGED", method: args[3] } });
+    return;
+  }
+  if (args[0] === "pr" && args[1] === "list") return out([]);
+  process.stderr.write(`stub-gh-pr: no answer for ${args.join(" ")}\n`);
+  process.exit(1);
+})();

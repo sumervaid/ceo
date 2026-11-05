@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { launch, makeRepo } from "./app";
@@ -291,5 +291,82 @@ test("an agent reaches the org server through the app's own runtime, and its not
   await expect(page.getByTestId("transcript")).toContainText("1 action");
   const ledger = readFileSync(path.join(repo, ".ceo/ledger.jsonl"), "utf8");
   expect(ledger).toContain("The API moved to v2.");
+  await app.close();
+});
+
+test("the pull request path: create, failing CI to the agent, review comments, merge, archive", async () => {
+  const state = path.join(os.tmpdir(), `ceo-gh-${process.pid}.json`);
+  rmSync(state, { force: true });
+  const l = await launch({ CEO_CLAUDE_BIN: DEMO, CEO_GH_BIN: path.resolve(__dirname, "../fake/stub-gh-pr"), STUB_GH_STATE: state });
+  const { app, page } = l;
+  await expect(page.getByTestId("onboarding")).toBeVisible({ timeout: 20000 });
+  const repo = makeRepo(l.dir);
+  const remote = path.join(l.dir, "remote.git");
+  execFileSync("git", ["init", "--bare", "-b", "main", remote], { stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+  execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repo, stdio: "ignore" });
+  await add(page, repo);
+  await page.reload();
+  await page.getByTestId("home-new").click();
+  await page.getByTestId("new-prompt").fill("Add exponential backoff");
+  await page.getByTestId("create-workspace").click();
+  await expect(page.getByTestId("transcript")).toContainText("Added exponential backoff", { timeout: 20000 });
+
+  // The recommended action is Create PR
+  await page.getByTestId("insp-checks").click();
+  await expect(page.getByTestId("next-action")).toContainText("Create PR", { timeout: 15000 });
+  await page.getByTestId("next-action-btn").click();
+  await expect(page.getByTestId("pr-title")).toHaveValue("Add exponential backoff");
+  await shot(page, "40-create-pr");
+  await page.getByTestId("submit-pr").click();
+  await expect(page.getByTestId("pr-dialog")).toBeHidden({ timeout: 15000 });
+  expect(execFileSync("git", ["ls-remote", remote], { encoding: "utf8" })).toContain("ceo/vega");
+  const opened = JSON.parse(readFileSync(state, "utf8")).pr;
+  expect(opened.base).toBe("main");
+  expect(opened.body).toContain("Changes");
+
+  // Failing CI shows, and its log goes to the agent
+  await expect(page.getByTestId("next-action")).toContainText("Fix checks", { timeout: 15000 });
+  await expect(page.getByTestId("checks")).toContainText("unit tests");
+  await expect(page.getByTestId("checks")).toContainText("Off by one here.");
+  await shot(page, "41-checks-failing");
+  await page.getByTestId("next-action-btn").click();
+  await expect(page.getByTestId("transcript")).toContainText("unit tests is failing", { timeout: 10000 });
+  await expect(page.locator(".msg-user .chip").last()).toContainText("Failing checks");
+
+  // CI turns green, then the review comments are next
+  writeFileSync(state, JSON.stringify({ ...JSON.parse(readFileSync(state, "utf8")), ciFails: false }));
+  await page.getByLabel("Refresh").click();
+  await expect(page.getByTestId("next-action")).toContainText("Respond to review", { timeout: 20000 });
+
+  // Approved and green: merge through GitHub
+  writeFileSync(state, JSON.stringify({ ...JSON.parse(readFileSync(state, "utf8")), reviewed: false }));
+  await page.getByLabel("Refresh").click();
+  await expect(page.getByTestId("next-action")).toContainText("Merge", { timeout: 20000 });
+  await page.getByTestId("next-action-btn").click();
+  await page.getByTestId("confirm").click();
+  await expect(page.getByTestId("next-action")).toContainText("Archive", { timeout: 20000 });
+  expect(JSON.parse(readFileSync(state, "utf8")).pr.method).toBe("--squash");
+  await app.close();
+});
+
+test("a file dropped on the composer lands in .context and reaches the agent", async () => {
+  const l = await launch({ CEO_CLAUDE_BIN: DEMO });
+  const { app, page } = l;
+  await expect(page.getByTestId("onboarding")).toBeVisible({ timeout: 20000 });
+  const repo = makeRepo(l.dir);
+  await add(page, repo);
+  await page.reload();
+  await page.getByTestId("home-new").click();
+  await page.getByTestId("create-workspace").click();
+  await expect(page.getByTestId("composer-input")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("banner-creating")).toHaveCount(0, { timeout: 15000 });
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(["hello from a screenshot"], "shot one.png", { type: "image/png" }));
+    document.querySelector('[data-testid="composer"]')!.dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByTestId("composer")).toContainText("shot-one.png", { timeout: 8000 });
+  expect(readFileSync(path.join(repo, ".ceo/worktrees/vega/.context/attachments/shot-one.png"), "utf8")).toBe("hello from a screenshot");
   await app.close();
 });

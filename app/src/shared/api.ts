@@ -323,6 +323,8 @@ export type Api = {
   addComment(p: { id: string; path: string; startLine: number; endLine: number; side: "old" | "new"; text: string; excerpt: string }): LineComment;
   deleteComment(p: { id: string; commentId: string }): void;
   files(p: { id: string }): FileEntry[];
+  /** Saves a dropped or pasted file under .context, which git never sees. */
+  attachFile(p: { id: string; name: string; base64: string }): { path: string };
   readFile(p: { id: string; path: string }): { text: string | null; binary: boolean; tooLarge: boolean };
   searchFiles(p: { id: string; query: string }): SearchHit[];
   checks(p: { id: string }): ChecksReport;

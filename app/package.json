@@ -15,6 +15,7 @@
     "test": "vitest run",
     "e2e": "node build.mjs && vite build && playwright test",
     "dist": "npm run build && electron-builder --mac --publish never",
+    "dist:local": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64 --publish never",
     "license:keygen": "node tools/license.mjs keygen",
     "license:issue": "node tools/license.mjs issue"
   },

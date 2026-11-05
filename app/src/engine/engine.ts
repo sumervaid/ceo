@@ -1229,6 +1229,20 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       s.comments = s.comments.filter((c) => c.id !== commentId);
       save(s);
     },
+    attachFile: ({ id, name, base64 }) => {
+      const s = ws(id);
+      const bytes = Buffer.from(base64, "base64");
+      if (bytes.length > 20 * 1024 * 1024) throw new Error("A dropped file can be 20 MB at most.");
+      const clean = path.basename(name).replace(/[^\w.-]+/g, "-").replace(/^[-.]+/, "") || "file";
+      const dir = path.join(s.worktree, ".context", "attachments");
+      mkdirSync(dir, { recursive: true });
+      const ext = path.extname(clean);
+      const stem = clean.slice(0, clean.length - ext.length);
+      let target = clean;
+      for (let n = 2; existsSync(path.join(dir, target)); n++) target = `${stem}-${n}${ext}`;
+      writeFileSync(path.join(dir, target), bytes);
+      return { path: `.context/attachments/${target}` };
+    },
     files: async ({ id }) => {
       const s = ws(id);
       return existsSync(s.worktree) ? G.listFiles(s.worktree, s.baseRef) : [];

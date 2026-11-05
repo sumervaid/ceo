@@ -13,6 +13,7 @@ asarUnpack:
   - out/collab.cjs
   - node_modules/node-pty/**
 npmRebuild: false
+afterPack: tools/after-pack.cjs
 mac:
   category: public.app-category.developer-tools
   icon: resources/icon.icns
@@ -25,7 +26,6 @@ mac:
       arch: [arm64, x64]
     - target: zip
       arch: [arm64, x64]
-  notarize: false
 dmg:
   title: CEO
   contents:
