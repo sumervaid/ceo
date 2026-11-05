@@ -144,9 +144,18 @@ export function worktreeStatus(agent: string, cwd?: string): string[] {
   if (!existsSync(wt)) return [];
   const r = git(["status", "--porcelain"], wt);
   if (!r.ok || !r.stdout) return [];
-  return r.stdout
+  return parsePorcelain(r.stdout);
+}
+
+/**
+ * Paths from `git status --porcelain`. The output arrives trimmed, so the
+ * first line may have lost its leading status column. A fixed slice would
+ * eat the first letter of that path.
+ */
+export function parsePorcelain(stdout: string): string[] {
+  return stdout
     .split("\n")
-    .map((l) => l.slice(3).trim())
+    .map((l) => /^[ MADRCUT?!]{1,2}\s+(.*)$/.exec(l)?.[1]?.trim() ?? "")
     .filter(Boolean);
 }
 

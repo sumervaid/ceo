@@ -7,6 +7,8 @@ files:
   - out/**/*
   - "!out/**/*.map"
   - package.json
+  - "!node_modules/node-pty/{src,scripts,deps,third_party,typings,binding.gyp}"
+  - "!node_modules/node-pty/prebuilds/win32-*/**"
 asarUnpack:
   - out/collab.cjs
   - node_modules/node-pty/**
@@ -29,6 +31,3 @@ dmg:
   contents:
     - { x: 150, y: 190 }
     - { x: 390, y: 190, type: link, path: /Applications }
-publish:
-  provider: generic
-  url: https://example.invalid/ceo/updates

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 
+import { parsePorcelain } from "./git.js";
 import { initLedger, readLedger, verify } from "./ledger.js";
 import { findAgent, hire, reconfigure, setBudget } from "./roster.js";
 
@@ -37,4 +38,9 @@ test("moving an agent to another provider keeps its brief, budget, level and spe
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a status line that lost its leading column keeps its whole path", () => {
+  assert.deepEqual(parsePorcelain("M README.md\n M src/a.ts\n?? new file.txt\nA  b.ts"), ["README.md", "src/a.ts", "new file.txt", "b.ts"]);
+  assert.deepEqual(parsePorcelain(""), []);
 });

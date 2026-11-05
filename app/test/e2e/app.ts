@@ -27,8 +27,11 @@ export async function launch(env: Record<string, string> = {}, reuse?: { dir: st
   const dir = reuse?.dir ?? realpathSync(mkdtempSync(path.join(os.tmpdir(), "ceo-e2e-")));
   const home = reuse?.home ?? path.join(dir, "home");
   const repo = path.join(dir, "orbit");
+  // CEO_E2E_EXEC runs the same flows against a packaged build.
+  const packaged = process.env.CEO_E2E_EXEC;
   const app = await electron.launch({
-    args: [APP, `--user-data-dir=${path.join(dir, "userdata")}`],
+    ...(packaged ? { executablePath: packaged } : {}),
+    args: [...(packaged ? [] : [APP]), `--user-data-dir=${path.join(dir, "userdata")}`],
     env: {
       ...process.env as Record<string, string>,
       CEO_E2E: "1",

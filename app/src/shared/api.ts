@@ -182,6 +182,8 @@ export type Readiness = {
   metered: boolean;
   account: string;
   fix: string[];
+  /** The one command that gets this provider going, with no commentary. */
+  fixCommand: string;
   models: string[];
   defaultModel: string;
   isStub: boolean;

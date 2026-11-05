@@ -928,7 +928,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       const spec = providerFor(r.provider);
       return {
         provider: r.provider, binary: r.binary, installed: r.installed, version: r.version, signedIn: r.signedIn, ready: r.ready,
-        metered: r.billing.mode === "api_key", account: r.billing.account ?? r.billing.summary, fix: r.fix,
+        metered: r.billing.mode === "api_key", account: r.billing.account ?? r.billing.summary, fix: r.fix, fixCommand: (r.fix[0] ?? "").split(/\s{2,}/)[0] ?? "",
         models: spec.models(), defaultModel: spec.defaultModel(), isStub: /stub-/.test(r.binary),
       };
     });

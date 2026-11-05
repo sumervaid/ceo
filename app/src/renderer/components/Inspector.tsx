@@ -357,13 +357,26 @@ export function TerminalView({ terminalId, initial }: { terminalId: string; init
     term.open(host.current!);
     fit.fit();
     let closed = false;
+    // A first line waits for the shell's prompt, or the shell echoes it twice.
+    let pendingFirst = initial ?? "";
+    const typeFirst = (): void => {
+      if (!pendingFirst) return;
+      const line = pendingFirst;
+      pendingFirst = "";
+      setTimeout(() => void call("terminalInput", { terminalId, data: line }), 350);
+    };
     void call("terminalOpen", { id: terminalId, cols: term.cols, rows: term.rows }).then((r) => {
       if (closed) return;
-      if (r.backlog) term.write(r.backlog);
-      if (initial) void call("terminalInput", { terminalId, data: initial });
+      if (r.backlog) {
+        term.write(r.backlog);
+        pendingFirst = "";
+      }
     }).catch((e: Error) => term.write(`\r\n${e.message}\r\n`));
     const off = bridge.on((e) => {
-      if (e.type === "terminal" && e.id === terminalId) term.write(e.data);
+      if (e.type === "terminal" && e.id === terminalId) {
+        term.write(e.data);
+        typeFirst();
+      }
       if (e.type === "terminal-exit" && e.id === terminalId) term.write(`\r\n[Shell exited with ${e.code}]\r\n`);
     });
     const input = term.onData((data) => void call("terminalInput", { terminalId, data }));

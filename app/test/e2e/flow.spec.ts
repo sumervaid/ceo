@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { launch, makeRepo } from "./app";
 
@@ -139,6 +140,7 @@ test("the whole loop: create, chat, review, comment, terminal, run, merge, archi
   await page.getByTestId("insp-record").click();
   await expect(page.getByTestId("record")).toContainText("hash chain is intact");
   await expect(page.getByTestId("record")).toContainText("Run started: Plan a circuit breaker");
+  await expect(page.getByTestId("record")).toContainText("README.md, src/retry.ts");
   await shot(page, "17b-record");
 
   // Back to the workspace, merge into main for real
@@ -243,6 +245,7 @@ test("with no agent installed, onboarding offers the install command in a real t
   await shot(page, "32-onboarding-none");
   await page.getByTestId("provider-claude").getByRole("button", { name: "Install" }).click();
   await expect(page.getByTestId("terminal")).toContainText("npm i -g @anthropic-ai/claude-code", { timeout: 10000 });
+  await expect(page.getByTestId("terminal")).not.toContainText("or set CEO_CLAUDE_BIN");
   await shot(page, "33-onboarding-terminal");
   await app.close();
 });
@@ -270,4 +273,23 @@ test("after the trial, the free plan holds 3 workspaces and sends Pro features t
   await expect(again.page.getByTestId("upgrade-dialog")).toContainText("free plan holds 3", { timeout: 8000 });
   await shot(again.page, "31-upgrade");
   await again.app.close();
+});
+
+test("an agent reaches the org server through the app's own runtime, and its note lands in the ledger", async () => {
+  const script = path.join(os.tmpdir(), `ceo-chat-${process.pid}.json`);
+  writeFileSync(script, JSON.stringify([{ match: "post a note", calls: [{ tool: "org_post", args: { to: "*", text: "The API moved to v2." } }], reply: "Posted." }]));
+  const l = await launch({ STUB_CHAT: script, CEO_CLAUDE_BIN: path.resolve(__dirname, "../../../tools/stub-claude") });
+  const { app, page } = l;
+  await expect(page.getByTestId("onboarding")).toBeVisible({ timeout: 20000 });
+  const repo = makeRepo(l.dir);
+  await add(page, repo);
+  await page.reload();
+  await page.getByTestId("home-new").click();
+  await page.getByTestId("new-prompt").fill("post a note for the team");
+  await page.getByTestId("create-workspace").click();
+  await expect(page.getByTestId("transcript")).toContainText("Posted.", { timeout: 25000 });
+  await expect(page.getByTestId("transcript")).toContainText("1 action");
+  const ledger = readFileSync(path.join(repo, ".ceo/ledger.jsonl"), "utf8");
+  expect(ledger).toContain("The API moved to v2.");
+  await app.close();
 });

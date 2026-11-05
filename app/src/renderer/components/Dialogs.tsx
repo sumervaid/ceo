@@ -401,15 +401,20 @@ export function ProviderCard({ r, onTerminal }: { r: Readiness; onTerminal: (r: 
 
 export function SetupTerminal({ r, onClose }: { r: Readiness; onClose: () => void }) {
   const refresh = useStore((s) => s.refreshReadiness);
+  const finish = (): void => {
+    void refresh(true);
+    void call("terminalClose", { terminalId: `login:${r.provider}` });
+    onClose();
+  };
   return (
     <Dialog
       title={`Set up ${PROVIDER_LABEL[r.provider]}`}
-      subtitle="The command is typed and waiting. Press return to run it."
+      subtitle={r.installed ? "The sign-in command is typed and waiting. Press return to run it." : "The install command is typed and waiting. Press return to run it."}
       width={760}
-      onClose={() => { void refresh(true); onClose(); }}
-      footer={<Button tone="accent" icon={<RefreshCw size={13} />} onClick={() => { void refresh(true); onClose(); }}>Done</Button>}
+      onClose={finish}
+      footer={<Button tone="accent" icon={<RefreshCw size={13} />} onClick={finish}>Done</Button>}
     >
-      <div className="setup-term"><TerminalView terminalId={`login:${r.provider}`} initial={r.fix[0] ?? ""} /></div>
+      <div className="setup-term"><TerminalView terminalId={`login:${r.provider}`} initial={r.fixCommand} /></div>
     </Dialog>
   );
 }
@@ -507,7 +512,7 @@ function LicensePanel() {
       </div>
       <div className="plan-box">
         {license.plan === "trial" ? <span>Every Pro feature is on for {license.trialDaysLeft} more days.</span> : <span>The trial has ended. Workspaces, chat, review and merge stay free.</span>}
-        {license.checkoutUrl && <Button tone="accent" size="sm" onClick={() => void desktop.openExternal(license.checkoutUrl)} data-testid="buy">Buy Pro</Button>}
+        {license.checkoutUrl && <Button tone="accent" size="sm" onClick={() => void desktop.openExternal(license.checkoutUrl)} data-testid="buy">Buy Pro · $20 a month</Button>}
       </div>
       <Field label="License key">
         <div className="key-row">
