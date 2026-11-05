@@ -70,6 +70,7 @@ function script() {
     await played.atStep(i);
   }
   played.close();
+  if (process.env.STUB_WRITE_FILE_CLAUDE) (await import("node:fs")).writeFileSync(process.env.STUB_WRITE_FILE_CLAUDE, "fixed\n");
   if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
   await sleep(delay);
   if (process.env.STUB_ERROR) {

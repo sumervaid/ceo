@@ -125,7 +125,10 @@ export type RunResult = {
   rateLimit?: { provider: Provider; retryAt: number; reason: string } | null;
 };
 
-const COLLAB_ENTRY = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "mcp", "collab-index.js");
+/** A host that bundles CEO names its own copy of the org server and the runtime that starts it. */
+function collabEntry(): string {
+  return process.env.CEO_COLLAB_ENTRY?.trim() || path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "mcp", "collab-index.js");
+}
 
 /** Follow-up turns a run may take before it stops listening to the board. */
 export function maxFollowUps(): number {
@@ -154,9 +157,9 @@ export function collabServerFor(
   if (agent.provider === "gemini" && !(agent.isolated && agent.worktreePath) && !agent.chief) return null;
   return {
     name: ORG_SERVER_NAME,
-    command: process.execPath,
+    command: process.env.CEO_NODE_BIN?.trim() || process.execPath,
     args: [
-      COLLAB_ENTRY,
+      collabEntry(),
       "--agent", agent.name,
       "--root", root,
       "--depth", String(depth),
@@ -180,6 +183,16 @@ export function workdirFor(agent: AgentRecord, cwd?: string): string {
  */
 export function processLevelFor(agent: AgentRecord): AgentRecord["autonomy"] {
   return agent.chief ? "observe" : agent.autonomy;
+}
+
+type AutonomyRecordLevel = AgentRecord["autonomy"];
+
+const LEVEL_ORDER: AutonomyRecordLevel[] = ["observe", "propose", "execute", "autonomous"];
+
+/** A run may ask for less than the agent's level. A request for more is ignored. */
+export function narrowedLevel(own: AutonomyRecordLevel, asked: AutonomyRecordLevel | null): AutonomyRecordLevel {
+  if (!asked) return own;
+  return LEVEL_ORDER.indexOf(asked) < LEVEL_ORDER.indexOf(own) ? asked : own;
 }
 
 function failedResult(error: string, durationMs = 0): RunResult {
@@ -349,6 +362,10 @@ export function runDelegation(
      * decides, and local is the default. See `sandbox.ts`.
      */
     sandbox?: SandboxKind | null;
+    /** Run on this model, for this run only. The agent's own setting is untouched. */
+    model?: string | null;
+    /** Start the process at this level, for this run only. It can never exceed the agent's own level. */
+    level?: AutonomyRecordLevel | null;
   } = {},
 ): RunHandle {
   const cwd = opts.cwd;
@@ -391,7 +408,10 @@ export function runDelegation(
     ? { ...found, provider: arm.provider, model: arm.model }
     : override && override !== found.provider
       ? { ...found, provider: override, model: providerFor(override).defaultModel() }
-      : found;
+      : opts.model
+        ? { ...found, model: opts.model }
+        : found;
+  if (opts.model && !arm) agent.model = opts.model;
 
   const spec = providerFor(agent.provider);
 
@@ -456,7 +476,7 @@ export function runDelegation(
     docket = [];
   }
   const compiled = compileAgentPrompt(agent, mission, { ...context, tools: collabPossible, docket });
-  const level = processLevelFor(agent);
+  const level = narrowedLevel(processLevelFor(agent), opts.level ?? null);
   const firstPrompt = opts.prompt?.trim() ? opts.prompt : task;
   const planFor = (delegationId: string | null): RunPlan =>
     opts.resumeSessionId

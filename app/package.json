@@ -1,0 +1,51 @@
+{
+  "name": "ceo-desktop",
+  "productName": "CEO",
+  "version": "1.0.0",
+  "description": "Run a team of coding agents on the plans already signed in.",
+  "private": true,
+  "author": "Sumer Vaid <sumer@stanford.edu>",
+  "main": "out/main.cjs",
+  "scripts": {
+    "build:bundle": "node build.mjs",
+    "build:ui": "vite build",
+    "build": "npm run typecheck && node build.mjs && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "node build.mjs && vite build && CEO_REQUIRE_STUBS=1 CEO_CLAUDE_BIN=$PWD/../tools/stub-claude CEO_CODEX_BIN=$PWD/../tools/stub-codex CEO_GEMINI_BIN=$PWD/../tools/stub-gemini electron .",
+    "test": "vitest run",
+    "e2e": "node build.mjs && vite build && playwright test",
+    "dist": "npm run build && electron-builder --mac --publish never",
+    "license:keygen": "node tools/license.mjs keygen",
+    "license:issue": "node tools/license.mjs issue"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@playwright/test": "1.64.1",
+    "@types/dompurify": "^3.0.5",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "dompurify": "^3.2.0",
+    "electron": "38.2.2",
+    "electron-builder": "26.0.12",
+    "esbuild": "^0.25.0",
+    "highlight.js": "^11.11.0",
+    "lucide-react": "^0.460.0",
+    "marked": "^15.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vitest": "^3.0.0",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.0"
+  }
+}

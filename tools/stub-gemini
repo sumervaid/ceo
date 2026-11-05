@@ -55,6 +55,7 @@ const task = prompt.includes("The task:") ? prompt.split("The task:").pop().trim
     await played.atStep(i);
   }
   played.close();
+  if (process.env.STUB_WRITE_FILE_GEMINI) (await import("node:fs")).writeFileSync(process.env.STUB_WRITE_FILE_GEMINI, "fixed\n");
   if (process.env.STUB_NO_RESULT) { await sleep(60000); process.exit(0); }
   await sleep(delay);
   out({ event: "result", result: { conversation_id: flag("--conversation") ?? "stub-conv-" + process.pid, status: "SUCCESS", response: (played.done ?? `Done: ${task.slice(0, 60)}`) + verdict("GEMINI"), duration_seconds: 1.2, num_turns: turns,

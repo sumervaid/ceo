@@ -1,0 +1,110 @@
+#!/usr/bin/env node
+// A scripted agent on the claude stream-json protocol. It edits real files, so diffs and checks are real. It costs nothing.
+const fs = require("node:fs");
+const path = require("node:path");
+if (process.argv.includes("--version")) { console.log("9.9.9 (stub-demo)"); process.exit(0); }
+const args = process.argv.slice(2);
+const task = args[args.indexOf("-p") + 1] ?? "";
+const session = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : `demo-${process.pid}`;
+const delay = Number(process.env.STUB_DELAY_MS ?? 40);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
+const usage = { input_tokens: 1800, output_tokens: 240 };
+const tool = (name, input) => out({ type: "assistant", message: { usage, content: [{ type: "tool_use", name, input }] } });
+const say = (text) => out({ type: "assistant", message: { usage, content: [{ type: "text", text }] } });
+const allowedAt = args.indexOf("--allowed-tools");
+const allowed = [];
+for (let i = allowedAt + 1; allowedAt >= 0 && i < args.length && !args[i].startsWith("--"); i++) allowed.push(args[i]);
+const readOnly = !allowed.some((t) => /^(Write|Edit)$/.test(t));
+
+const RETRY = `export type RetryOptions = {
+  attempts?: number;
+  baseDelayMs?: number;
+  jitter?: boolean;
+};
+
+export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
+  const { attempts = 3, baseDelayMs = 100, jitter = true } = options;
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (i < attempts - 1) await sleep(backoff(i, baseDelayMs, jitter));
+    }
+  }
+  throw last;
+}
+
+function backoff(attempt: number, base: number, jitter: boolean): number {
+  const delay = base * 2 ** attempt;
+  return jitter ? delay * (0.5 + Math.random() / 2) : delay;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+`;
+const TEST = `import { retry } from "../src/retry";
+
+test("backs off between attempts", async () => {
+  let calls = 0;
+  const value = await retry(async () => {
+    if (++calls < 3) throw new Error("flaky");
+    return "ok";
+  }, { baseDelayMs: 1, jitter: false });
+  expect(value).toBe("ok");
+  expect(calls).toBe(3);
+});
+`;
+
+(async () => {
+  out({ type: "system", subtype: "init", model: "stub", tools: [], session_id: session });
+  const said = task.toLowerCase();
+  const scripted = process.env.STUB_CHAT && said.includes("reply with json alone");
+  if (scripted) {
+    await sleep(delay);
+    const reply = JSON.stringify({ rationale: "Rate limiting, its tests and its docs can each merge alone.", tasks: [
+      { title: "Add a token bucket limiter", prompt: "Add a token bucket limiter in src/limit.ts with tests.", provider: "claude" },
+      { title: "Apply the limiter to the public client", prompt: "Wrap the public client in the limiter.", provider: "codex" },
+      { title: "Document rate limits in the README", prompt: "Add a Rate limits section to the README.", provider: "gemini" },
+    ] });
+    say(reply);
+    await sleep(delay);
+    out({ type: "result", subtype: "success", total_cost_usd: 0.0312, usage, result: reply, permission_denials: [], session_id: session });
+    process.exit(0);
+  }
+  await sleep(delay);
+  say("I will read the retry helper and its callers first.\n");
+  await sleep(delay);
+  tool("Read", { file_path: "src/retry.ts" });
+  await sleep(delay);
+  tool("Grep", { pattern: "retry(", path: "src" });
+  await sleep(delay);
+  if (readOnly) {
+    say("## Plan\n\n1. Add `baseDelayMs` and `jitter` options to `retry`.\n2. Sleep with exponential backoff between attempts, never after the last one.\n3. Add a test that fails without the backoff.\n\nApprove this plan and I will build it.");
+  } else {
+    if (said.includes("rename")) {
+      const cur = fs.readFileSync("src/retry.ts", "utf8").replace(/baseDelayMs/g, "initialDelayMs");
+      fs.writeFileSync("src/retry.ts", cur);
+      tool("Edit", { file_path: "src/retry.ts" });
+      await sleep(delay);
+      say("Renamed `baseDelayMs` to `initialDelayMs`, as the review comment asked.");
+    } else {
+      fs.mkdirSync("test", { recursive: true });
+      fs.writeFileSync("src/retry.ts", RETRY);
+      tool("Edit", { file_path: "src/retry.ts" });
+      await sleep(delay);
+      fs.writeFileSync(path.join("test", "retry.test.ts"), TEST);
+      tool("Write", { file_path: "test/retry.test.ts" });
+      await sleep(delay);
+      fs.appendFileSync("README.md", "\n## Retry options\n\n`attempts`, `baseDelayMs` and `jitter` control the backoff.\n");
+      tool("Edit", { file_path: "README.md" });
+      await sleep(delay);
+      tool("Bash", { command: "npm test" });
+      await sleep(delay);
+      say("Added exponential backoff with jitter to `retry`.\n\n- **`src/retry.ts`**: new `RetryOptions`. The helper sleeps between attempts and never after the last one.\n- **`test/retry.test.ts`**: covers the flaky path.\n- **`README.md`**: documents the three options.\n\n```ts\nawait retry(fetchUser, { attempts: 5, baseDelayMs: 200 });\n```\n\nThe tests pass.");
+    }
+  }
+  await sleep(delay);
+  out({ type: "result", subtype: "success", total_cost_usd: 0.1842, usage: { input_tokens: 14200, output_tokens: 1860 }, result: "done", permission_denials: [], session_id: session });
+})();
