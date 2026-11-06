@@ -96,8 +96,10 @@ a diff review, checks, a terminal and a pull request.
 
 The beta is on the [releases page](https://github.com/sumervaid/ceo/releases).
 Apple Silicon only for now. The beta carries no Apple Developer ID
-signature yet. On first launch, right-click CEO in Applications and choose
-Open. Every install starts with a 14-day trial of every feature. The free
+signature yet, so macOS blocks the first launch. After that first try,
+System Settings, Privacy & Security, Open Anyway lets CEO start. The
+command `xattr -dr com.apple.quarantine /Applications/CEO.app` does the
+same. Every install starts with a 14-day trial of every feature. The free
 plan afterward keeps three workspaces and three team agents per project.
 All of the app is MIT, the plan checks included. The
 [app README](app/README.md) covers building from source.
