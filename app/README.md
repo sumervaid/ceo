@@ -95,5 +95,7 @@ A payment provider's webhook should call the same signing code and email the key
 | Plan | Holds |
 | --- | --- |
 | Trial, 14 days | Everything. |
-| Free | 3 active workspaces, chat, review, checks, PRs, merge, spend and the ledger. |
-| Pro | Unlimited workspaces, Race, Plan, Insights and ledger export. |
+| Free | 3 active workspaces, 3 team agents per project, chat, review, checks, PRs, merge, spend and the ledger. |
+| Pro | Unlimited workspaces and team agents, the chief of staff, companies, several attempts per task, Race, Plan, Insights and ledger export. |
+
+All of the code is open source under MIT, the Pro checks included. A build from source can change any limit. The key pays for the official signed build and its upkeep.

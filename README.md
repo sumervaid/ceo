@@ -24,6 +24,9 @@ model and the permissions behind each event. In a simulated
 [experiment](#experiments), a team of eight solved 74% of tasks against
 69% for eight agents working alone.
 
+- **[A Mac app as well.](#the-desktop-app)** The same org in a window:
+  the chief of staff, the team, the task board, approvals and a diff review
+  per workspace.
 - **[No API keys.](#install)** Agents bill the subscriptions the CLIs are
   signed in with. A metered key shows as a warning on the hire form.
 - **[A company in one keystroke.](#a-company-in-ten-seconds)** Six
@@ -74,6 +77,34 @@ CEO needs no API key. CEO stores no model-provider credential. CEO runs
 the CLIs already signed in on the machine. `ceo setup` names the account
 each CLI bills. A single ready provider is enough to start. See
 [setup and accounts](docs/setup.md).
+
+## The desktop app
+
+<p align="center">
+  <img src="docs/app/chief.png" alt="The chief of staff in the desktop app hires a tester on Claude and a reviewer on Codex, then gives the tester work" width="900">
+</p>
+
+The Mac app runs the same org as the terminal. One message to the chief
+of staff hires agents and starts work. Headless agents on Claude, Codex
+and Gemini stream on the Live tab. Checked tasks wait on the Approvals tab
+with the evidence. Each workspace is a branch and a worktree with a chat,
+a diff review, checks, a terminal and a pull request.
+
+<p align="center">
+  <img src="docs/app/review.png" alt="A side-by-side diff review of an agent's change in the desktop app" width="900">
+</p>
+
+The beta is on the [releases page](https://github.com/sumervaid/ceo/releases).
+Apple Silicon only for now. The beta carries no Apple Developer ID
+signature yet. On first launch, right-click CEO in Applications and choose
+Open. Every install starts with a 14-day trial of every feature. The free
+plan afterward keeps three workspaces and three team agents per project.
+All of the app is MIT, the plan checks included. The
+[app README](app/README.md) covers building from source.
+
+<p align="center">
+  <img src="docs/app/chief-dark.png" alt="The chief of staff in the dark theme" width="900">
+</p>
 
 ## A company in ten seconds
 
@@ -558,4 +589,6 @@ pnpm demo:all          # re-record every GIF on this page against the $0 fixture
 
 ## License
 
-MIT.
+MIT, the desktop app included. Code under an `enterprise/` directory
+would carry its own license in `enterprise/LICENSE`. No such directory
+exists today. See [LICENSE](LICENSE).
