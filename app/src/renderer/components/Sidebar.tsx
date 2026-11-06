@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  Archive, BarChart3, Check, ChevronRight, CircleDollarSign, Flag, GitPullRequest, History, Layers, Plus, Search, Settings as SettingsIcon, Sparkles, Trophy, TriangleAlert,
+  Archive, BarChart3, Check, ChevronRight, CircleDollarSign, Crown, Flag, GitPullRequest, History, Inbox, Layers, Plus, Search, Settings as SettingsIcon, Sparkles, Trophy, TriangleAlert, Users,
 } from "lucide-react";
 
 import type { Project, Workspace } from "../../shared/api";
@@ -57,6 +57,32 @@ function Row({ w, index }: { w: Workspace; index: number | null }) {
   );
 }
 
+function TeamRow({ p }: { p: Project }) {
+  const summary = useStore((s) => s.snapshot.org[p.id]);
+  const page = useStore((s) => s.page);
+  const setPage = useStore((s) => s.setPage);
+  const active = page.kind === "org" && page.projectId === p.id;
+  if (!p.isGit) return null;
+  const sub = !summary || (!summary.hasChief && summary.agents === 0)
+    ? "Chief of staff and headless agents"
+    : [summary.hasChief ? "Chief of staff" : null, summary.agents ? `${summary.agents} agent${summary.agents === 1 ? "" : "s"}` : null, summary.queued ? `${summary.queued} queued` : null].filter(Boolean).join(" · ");
+  const go = (): void => setPage({ kind: "org", projectId: p.id, tab: active && page.kind === "org" ? page.tab : summary?.hasChief ? "chief" : "team" });
+  return (
+    <div className={`wsrow teamrow ${active ? "wsrow-active" : ""}`} role="button" tabIndex={0} onClick={go} onKeyDown={(e) => e.key === "Enter" && go()} data-testid={`team-${p.name}`}>
+      <span className="wsrow-status">{summary?.running || summary?.replying ? <Spinner size={11} /> : summary?.hasChief ? <Crown size={12} className="accent" /> : <Users size={12} className="muted" />}</span>
+      <span className="wsrow-main">
+        <span className="wsrow-title">Team</span>
+        <span className="wsrow-sub"><span>{summary?.running ? `${summary.running} working` : sub}</span></span>
+      </span>
+      {!!summary?.approvals && (
+        <button className="team-approvals" title={`${summary.approvals} waiting for a decision`} onClick={(e) => { e.stopPropagation(); setPage({ kind: "org", projectId: p.id, tab: "approvals" }); }} data-testid={`approvals-${p.name}`}>
+          <Inbox size={11} />{summary.approvals}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ProjectGroup({ p, list, indexOf }: { p: Project; list: Workspace[]; indexOf: (w: Workspace) => number | null }) {
   const collapsed = useStore((s) => !!s.collapsed[p.id]);
   const toggle = useStore((s) => s.toggleCollapsed);
@@ -85,6 +111,7 @@ function ProjectGroup({ p, list, indexOf }: { p: Project; list: Workspace[]; ind
           <button className="iconbtn" onClick={() => open({ kind: "new-workspace", projectId: p.id })} aria-label={`New workspace in ${p.name}`}><Plus size={13} /></button>
         </div>
       </div>
+      {!collapsed && <TeamRow p={p} />}
       {!collapsed && list.map((w) => <Row key={w.id} w={w} index={indexOf(w)} />)}
       {!collapsed && list.length === 0 && (
         <button className="group-empty" onClick={() => open({ kind: "new-workspace", projectId: p.id })}>No active workspaces</button>
@@ -112,7 +139,8 @@ export function Sidebar() {
     return i >= 0 ? i : null;
   };
   const archived = workspaces.filter((w) => w.status === "archived").length;
-  const running = workspaces.filter((w) => w.runningTabs.length > 0).length;
+  const org = useStore((s) => s.snapshot.org);
+  const running = workspaces.filter((w) => w.runningTabs.length > 0).length + Object.values(org).reduce((n, o) => n + o.running, 0);
 
   return (
     <aside className="sidebar">

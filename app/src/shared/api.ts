@@ -15,6 +15,8 @@ export type ProjectConfig = {
   /** Guidance every agent in this project receives. */
   instructions: string;
   baseBranch: string;
+  /** Idle team agents pick up their next queued task without being asked. */
+  autoDispatch: boolean;
 };
 
 export type Project = {
@@ -196,7 +198,7 @@ export type LicenseState = {
   expiresAt: number | null;
   trialEndsAt: number | null;
   trialDaysLeft: number;
-  limits: { activeWorkspaces: number | null; race: boolean; planner: boolean; insights: boolean; exportData: boolean };
+  limits: { activeWorkspaces: number | null; race: boolean; planner: boolean; insights: boolean; exportData: boolean; teamAgents: number | null; chief: boolean; companies: boolean; attempts: boolean };
   checkoutUrl: string;
   error: string | null;
 };
@@ -262,7 +264,216 @@ export type RecordEntry = { seq: number; ts: number; type: string; title: string
 
 export type ListItem = { value: string; title: string; detail: string };
 
-export type Snapshot = { projects: Project[]; workspaces: Workspace[]; races: Race[] };
+export type Snapshot = { projects: Project[]; workspaces: Workspace[]; races: Race[]; org: Record<string, OrgSummary> };
+
+// -- the org: chief of staff, team, tasks, approvals --------------------------
+
+export type Level = "observe" | "propose" | "execute" | "autonomous";
+export const LEVELS: Level[] = ["observe", "propose", "execute", "autonomous"];
+export type Sandbox = "local" | "docker" | "ssh";
+
+/** One line of what a headless agent did, in order. */
+export type RunLine = { kind: "text" | "tool" | "denied" | "turn" | "error"; text: string };
+export type RunVia = "delegate" | "chief" | "task" | "broadcast" | "dispatch";
+export type RunStatus = "running" | "done" | "failed" | "cancelled" | "waiting";
+export type OrgRun = {
+  key: string;
+  projectId: string;
+  agent: string;
+  task: string;
+  taskId: string | null;
+  attemptId: string | null;
+  arm: string | null;
+  via: RunVia;
+  status: RunStatus;
+  provider: Provider | null;
+  model: string | null;
+  workdir: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  costUsd: number;
+  estimate: boolean;
+  error: string | null;
+  denials: string[];
+  retryAt: number | null;
+  delegationId: string | null;
+  lines: RunLine[];
+};
+
+export type Agent = {
+  name: string;
+  role: string;
+  provider: Provider;
+  model: string;
+  level: Level;
+  /** What the level lets the agent do, in a few words. */
+  levelLabel: string;
+  tools: string[];
+  budgetUsd: number;
+  spentUsd: number;
+  runs: number;
+  hiredAt: number;
+  lastActiveAt: number | null;
+  isolated: boolean;
+  branch: string | null;
+  chief: boolean;
+  /** Set for the agent behind a workspace, whose work happens in that workspace's chat. */
+  workspaceId: string | null;
+  guardrails: string[];
+  collaboration: string;
+  state: "idle" | "running" | "waiting" | "over-budget";
+  /** The task on screen while it runs. */
+  doing: string | null;
+  queued: number;
+  docket: number;
+};
+
+export type Attempt = {
+  id: string;
+  agent: string;
+  arm: string;
+  branch: string | null;
+  outcome: string | null;
+  pass: boolean | null;
+  score: number | null;
+  costUsd: number;
+  promoted: boolean;
+  startedAt: number;
+  endedAt: number | null;
+};
+export type TaskState = "queued" | "running" | "verifying" | "done" | "failed" | "cancelled" | "blocked";
+export type TaskPriority = "high" | "normal" | "low";
+export type Task = {
+  id: string;
+  title: string;
+  assignee: string | null;
+  priority: TaskPriority;
+  status: TaskState;
+  blockedReason: string | null;
+  createdAt: number;
+  updatedAt: number;
+  costUsd: number | null;
+  note: string | null;
+  requestedBy: string | null;
+  autoStart: boolean;
+  provider: Provider | null;
+  checks: string[];
+  samples: number;
+  kind: string | null;
+  sandbox: Sandbox | null;
+  attempts: Attempt[];
+};
+export type NewTask = {
+  projectId: string;
+  title: string;
+  assignee: string | null;
+  priority?: TaskPriority;
+  provider?: Provider | null;
+  /** One check per line: a shell command, `judge: <rubric>` or `everval: <collection>`. */
+  checks?: string[];
+  samples?: number;
+  sandbox?: Sandbox | null;
+  /** Start it now rather than leave it queued. */
+  run?: boolean;
+};
+
+export type ChiefAction = { kind: "hire" | "delegate" | "handoff" | "fire" | "post" | "ask" | "budget"; agent: string; text: string; taskId: string | null; provider: Provider | null };
+export type ChiefTurn = {
+  id: string;
+  ts: number;
+  message: string;
+  reply: string;
+  status: "running" | "done" | "failed" | "cancelled";
+  provider: Provider | null;
+  model: string | null;
+  costUsd: number;
+  estimate: boolean;
+  actions: ChiefAction[];
+};
+export type Chief = {
+  name: string;
+  provider: Provider;
+  model: string;
+  level: Level;
+  /** What the chief may do to the team at this level, in words. */
+  levelLabel: string;
+  may: { queue: boolean; hire: boolean; start: boolean; fire: boolean };
+  allowance: { totalUsd: number; givenUsd: number; leftUsd: number };
+  turns: ChiefTurn[];
+  chiefCostUsd: number;
+  teamCostUsd: number;
+  teamRuns: number;
+  /** The run behind the reply being written now. */
+  replying: string | null;
+};
+
+export type Approval = {
+  id: string;
+  action: string;
+  agent: string | null;
+  taskId: string | null;
+  branch: string | null;
+  summary: string;
+  ts: number;
+  evidence: string[];
+  pass: boolean | null;
+};
+export type TeamNote = { seq: number; ts: number; from: string; to: string; text: string; ask: boolean };
+export type MissionCheck = { name: string; spec: string; state: string; detail: string | null; at: number | null };
+export type Mission = { objective: string; criteria: string[]; guardrails: string[]; checks: MissionCheck[]; setAt: number };
+export type DocketItem = { id: string; kind: string; group: string; title: string; source: string; tokens: string; agents: string[]; addedAt: number; addedBy: string };
+
+export type Org = {
+  projectId: string;
+  exists: boolean;
+  agents: Agent[];
+  chief: Chief | null;
+  tasks: Task[];
+  approvals: Approval[];
+  autoMerge: boolean;
+  notes: TeamNote[];
+  mission: Mission | null;
+  docket: DocketItem[];
+  runs: OrgRun[];
+  ledger: { ok: boolean; entries: number; detail: string };
+  spentTodayUsd: number;
+  error: string | null;
+};
+export type OrgSummary = { agents: number; running: number; approvals: number; queued: number; hasChief: boolean; replying: boolean };
+
+export type NewAgent = {
+  projectId: string;
+  name: string;
+  role: string;
+  provider: Provider;
+  model: string;
+  level: Level;
+  budgetUsd: number;
+  isolated: boolean;
+  guardrails: string[];
+  collaboration: string;
+};
+export type AgentChange = { role?: string; provider?: Provider; model?: string; level?: Level; budgetUsd?: number; guardrails?: string[]; collaboration?: string };
+export type AgentDetail = {
+  agent: Agent;
+  prompt: string;
+  runs: Array<{ id: string; ts: number; task: string; ok: boolean | null; costUsd: number; estimate: boolean; durationMs: number; provider: string; model: string; denials: number; output: string | null }>;
+  unmerged: string[];
+  worktree: string | null;
+  docket: DocketItem[];
+};
+export type RoleTemplate = { name: string; role: string; level: Level; budgetUsd: number; isolated: boolean };
+export type CompanySeat = { name: string; brief: string; provider: Provider; model: string; level: Level; budgetUsd: number; isolated: boolean; movedFrom: Provider | null; skip: string | null };
+export type Company = { id: string; title: string; tagline: string; seats: number };
+export type CompanyPreview = { id: string; title: string; seats: CompanySeat[]; totalCapUsd: number; chief: { hire: boolean; name: string; provider: Provider }; note: string | null };
+export type SuggestedAgent = { name: string; role: string; provider: Provider; model: string; budgetUsd: number; isolated: boolean; level: Level; why: string };
+export type Suggestion = { agents: SuggestedAgent[]; summary: string[] };
+export type Integrations = {
+  github: { ready: boolean; detail: string };
+  huggingface: { ready: boolean; detail: string };
+  skills: Array<{ name: string; source: string; description: string; ready: boolean }>;
+  sandboxes: Array<{ kind: Sandbox; ready: boolean; detail: string }>;
+};
 
 export type NewWorkspace = {
   projectId: string;
@@ -284,7 +495,10 @@ export type EngineEvent =
   | { type: "script"; workspaceId: string; kind: ScriptKind; data: string }
   | { type: "script-state"; workspaceId: string; kind: ScriptKind; running: boolean; code: number | null; url: string | null }
   | { type: "notify"; title: string; body: string; workspaceId: string | null; level: "done" | "failed" | "info"; sound: boolean }
-  | { type: "license"; license: LicenseState };
+  | { type: "license"; license: LicenseState }
+  | { type: "org"; projectId: string }
+  | { type: "org-run"; run: OrgRun }
+  | { type: "org-line"; projectId: string; key: string; line: RunLine };
 
 export type ScriptKind = "setup" | "run" | "archive" | "check";
 export type ScriptState = { running: boolean; code: number | null; url: string | null; log: string };
@@ -356,6 +570,46 @@ export type Api = {
   insights(p: { projectId: string | null }): Insights;
   exportLedger(p: { projectId: string; to: string }): { path: string; entries: number };
   record(p: { id: string }): { entries: RecordEntry[]; ok: boolean; detail: string };
+
+  org(p: { projectId: string }): Org;
+  agentDetail(p: { projectId: string; name: string }): AgentDetail;
+  roleTemplates(): RoleTemplate[];
+  hireAgent(p: NewAgent): Agent;
+  updateAgent(p: { projectId: string; name: string; change: AgentChange }): Agent;
+  isolateAgent(p: { projectId: string; name: string }): Agent;
+  fireAgent(p: { projectId: string; name: string; reason: string | null }): void;
+  mergeAgent(p: { projectId: string; name: string }): { ok: boolean; message: string; conflicts: string[] };
+  delegate(p: { projectId: string; agent: string; task: string }): OrgRun | null;
+  broadcast(p: { projectId: string; task: string; agents: string[] }): { started: string[]; queued: string[] };
+  cancelRun(p: { projectId: string; key: string }): void;
+  dismissRun(p: { projectId: string; key: string }): void;
+  addTask(p: NewTask): Task;
+  editTask(p: { projectId: string; id: string; title?: string; assignee?: string | null; priority?: TaskPriority }): Task;
+  runTask(p: { projectId: string; id: string }): void;
+  cancelTask(p: { projectId: string; id: string }): void;
+  requeueTask(p: { projectId: string; id: string }): void;
+  dispatch(p: { projectId: string }): { started: number };
+  routeTask(p: { projectId: string; title: string }): Array<{ provider: Provider; model: string; why: string }>;
+  hireChief(p: { projectId: string; provider?: Provider }): Chief;
+  chiefSend(p: { projectId: string; text: string }): void;
+  chiefStop(p: { projectId: string }): void;
+  chiefNew(p: { projectId: string }): void;
+  chiefSet(p: { projectId: string; provider?: Provider; model?: string; level?: Level; allowanceUsd?: number }): Chief;
+  decide(p: { projectId: string; id: string; approve: boolean }): { ok: boolean; message: string };
+  setAutoMerge(p: { projectId: string; on: boolean }): void;
+  setMission(p: { projectId: string; objective: string; criteria: string[]; guardrails: string[]; checks: string[] }): Mission;
+  checkMission(p: { projectId: string }): Mission;
+  postNote(p: { projectId: string; to: string; text: string }): void;
+  addDocket(p: { projectId: string; input: string; agents: string[] }): DocketItem;
+  removeDocket(p: { projectId: string; id: string }): void;
+  shareDocket(p: { projectId: string; id: string; agent: string; give: boolean }): void;
+  refreshDocket(p: { projectId: string; id: string }): DocketItem;
+  companies(): Company[];
+  previewCompany(p: { projectId: string; id: string; scale: number }): CompanyPreview;
+  hireCompany(p: { projectId: string; id: string; scale: number }): { hired: string[]; message: string };
+  suggestTeam(p: { projectId: string }): Suggestion;
+  integrations(p: { projectId: string }): Integrations;
+  verifyLedger(p: { projectId: string }): { ok: boolean; entries: number; detail: string };
 };
 
 export type Method = keyof Api;

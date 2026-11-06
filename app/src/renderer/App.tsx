@@ -5,6 +5,7 @@ import { bridge, call, desktop } from "./api";
 import { Dialogs } from "./components/Dialogs";
 import { HistoryPage, HomePage, InsightsPage, Onboarding, RacePage, SpendPage } from "./components/Pages";
 import { addProjectFlow, Sidebar } from "./components/Sidebar";
+import { OrgPage } from "./components/Org";
 import { Resizer, Spinner } from "./components/ui";
 import { WorkspaceView } from "./components/WorkspaceView";
 import { act, boot, useStore } from "./store";
@@ -14,9 +15,16 @@ function currentWorkspace() {
   return s.page.kind === "workspace" ? s.snapshot.workspaces.find((w) => w.id === (s.page as { id: string }).id) : undefined;
 }
 
+function currentProject(): string | undefined {
+  const s = useStore.getState();
+  if (s.page.kind === "org") return s.page.projectId;
+  return currentWorkspace()?.projectId ?? s.snapshot.projects[0]?.id;
+}
+
 function runAction(action: string): void {
   const s = useStore.getState();
   const w = currentWorkspace();
+  const pid = currentProject();
   switch (action) {
     case "new-workspace": s.open({ kind: "new-workspace" }); break;
     case "new-race": s.open({ kind: "race" }); break;
@@ -28,6 +36,10 @@ function runAction(action: string): void {
     case "sidebar": s.toggleSidebar(); break;
     case "inspector": s.toggleInspector(); break;
     case "spend": s.setPage({ kind: "spend" }); break;
+    case "chief": if (pid) s.setPage({ kind: "org", projectId: pid, tab: "chief" }); break;
+    case "team": if (pid) s.setPage({ kind: "org", projectId: pid, tab: "team" }); break;
+    case "new-task": if (pid) s.open({ kind: "task", projectId: pid }); break;
+    case "hire": if (pid) s.open({ kind: "hire", projectId: pid }); break;
     case "insights": s.setPage({ kind: "insights" }); break;
     case "review": if (w) s.setReview(s.review ? null : { path: null }); break;
     case "terminal": if (w) { s.setReview(null); s.setInspector("terminal"); } break;
@@ -167,6 +179,7 @@ export function App() {
         : page.kind === "insights" ? <InsightsPage />
         : page.kind === "history" ? <HistoryPage />
         : race ? <RacePage race={race} />
+        : page.kind === "org" ? <OrgPage key={page.projectId} projectId={page.projectId} tab={page.tab} agent={page.agent} />
         : <HomePage />}
       <Dialogs />
       <Toasts />

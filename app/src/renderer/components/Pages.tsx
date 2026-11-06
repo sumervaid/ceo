@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  ArchiveRestore, BarChart3, CheckCircle2, CircleDollarSign, CircleX, Download, ExternalLink, Flag, FolderPlus, GitBranch, History, Link2, Plus, RefreshCw, ShieldCheck, ShieldAlert, Sparkles, Trophy,
+  ArchiveRestore, BarChart3, CheckCircle2, Users, CircleDollarSign, CircleX, Download, ExternalLink, Flag, FolderPlus, GitBranch, History, Link2, Plus, RefreshCw, ShieldCheck, ShieldAlert, Sparkles, Trophy,
 } from "lucide-react";
 
 import type { Insights, Race, Readiness, SpendReport, Workspace } from "../../shared/api";
@@ -294,6 +294,7 @@ export function HomePage() {
           {rest.length > 0 && <TileGroup title="Idle" list={rest} />}
         </>
       )}
+      <TeamsGroup />
       {races.length > 0 && (
         <section className="home-group">
           <h3>Races</h3>
@@ -309,6 +310,30 @@ export function HomePage() {
     </PageShell>
   );
 }
+function TeamsGroup() {
+  const { projects, org } = useStore((s) => s.snapshot);
+  const setPage = useStore((s) => s.setPage);
+  const git = projects.filter((p) => p.isGit);
+  if (!git.length) return null;
+  return (
+    <section className="home-group">
+      <h3>Teams</h3>
+      <div className="tiles">
+        {git.map((p) => {
+          const o = org[p.id];
+          const bits = [o?.hasChief ? "Chief of staff" : null, o?.agents ? `${o.agents} agent${o.agents === 1 ? "" : "s"}` : null, o?.queued ? `${o.queued} queued` : null, o?.approvals ? `${o.approvals} to approve` : null].filter(Boolean);
+          return (
+            <button key={p.id} className="tile" onClick={() => setPage({ kind: "org", projectId: p.id, tab: o?.hasChief ? "chief" : "team" })} data-testid={`home-team-${p.name}`}>
+              <div className="tile-top">{o?.running ? <Spinner size={11} /> : <Users size={13} className="muted" />}<span className="tile-title">{p.name}</span></div>
+              <div className="tile-sub">{o?.running ? `${o.running} working now` : bits.length ? bits.join(" · ") : "Hire a chief of staff or an agent"}</div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function TileGroup({ title, list }: { title: string; list: Workspace[] }) {
   return (
     <section className="home-group">

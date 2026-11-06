@@ -32,10 +32,11 @@ import * as G from "./gitops";
 import { decideNext } from "./decide";
 import { licenseState } from "./license";
 import { pickName } from "./names";
+import { createOrg } from "./org";
 
 export type Handlers = { [M in Method]: (p: ParamsOf<M>) => ResultOf<M> | Promise<ResultOf<M>> };
 
-const DEFAULT_CONFIG: ProjectConfig = { setup: "", run: "", archive: "", check: "", copy: [".env", ".env.local"], instructions: "", baseBranch: "" };
+const DEFAULT_CONFIG: ProjectConfig = { setup: "", run: "", archive: "", check: "", copy: [".env", ".env.local"], instructions: "", baseBranch: "", autoDispatch: false };
 const DEFAULT_SETTINGS: Settings = {
   theme: "system", sound: true, notifications: true, defaultProvider: "claude", defaultModels: {}, defaultBudgetUsd: 25, teamNotes: true, editor: "", onboarded: false,
 };
@@ -204,6 +205,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       projects: [...projects.values()].sort((a, b) => a.name.localeCompare(b.name)),
       workspaces: [...stored.values()].sort((a, b) => b.createdAt - a.createdAt).map(view),
       races: [...races.values()].sort((a, b) => b.createdAt - a.createdAt),
+      org: team.summaries(),
     };
   }
   function pushSnapshot(): void {
@@ -395,7 +397,12 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     }
   }
 
-  const isRunning = (id: string): boolean => [...live.keys()].some((k) => k.startsWith(`${id}:`));
+  /** A workspace's agent is busy in its chat, or in a team run that reached it before the guard existed. */
+  const isRunning = (id: string): boolean => {
+    if ([...live.keys()].some((k) => k.startsWith(`${id}:`))) return true;
+    const s = stored.get(id);
+    return !!s && team.teamBusy(s.projectId, s.slug);
+  };
   function refuseWhileRunning(id: string): void {
     if (isRunning(id)) throw new Error("Stop the running agent first.");
   }
@@ -501,6 +508,14 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
 
   function start(s: Stored, tab: ChatTab, text: string, attachments: ChatAttachment[]): void {
     const key = `${s.id}:${tab.id}`;
+    // Two runs of one agent in one folder would trip over each other. The message waits.
+    if (team.teamBusy(s.projectId, s.slug)) {
+      const q = queues.get(key) ?? [];
+      q.unshift({ text, attachments });
+      queues.set(key, q);
+      pushSnapshot();
+      return;
+    }
     const root = rootOf(s);
     const display = text || "Please address the attached comments.";
     const providers = (s.sessionProviders ??= {});
@@ -1111,9 +1126,25 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     return term;
   }
 
+  // -- the org -------------------------------------------------------------
+
+  const team = createOrg({
+    emit,
+    project,
+    projects: () => [...projects.values()],
+    ensureOrg,
+    settings: () => settings,
+    license,
+    workspaceAgents: (projectId) => new Map([...stored.values()].filter((w) => w.projectId === projectId).map((w) => [w.slug, w.id])),
+    // A workspace still being made or taken down is busy too. Its folder is not settled.
+    workspaceBusy: (projectId, agent) => [...stored.values()].some((w) => w.projectId === projectId && w.slug === agent && ([...live.keys()].some((k) => k.startsWith(`${w.id}:`)) || w.status === "creating" || w.status === "setup" || w.status === "archiving")),
+    pushSnapshot,
+  });
+
   // -- the surface ---------------------------------------------------------
 
   const handlers: Handlers = {
+    ...team.handlers,
     snapshot,
     readiness: (p) => readiness(!!p?.refresh),
     settings: () => settings,
@@ -1173,8 +1204,8 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     },
     removeProject: ({ projectId }) => {
       const p = project(projectId);
-      if ([...stored.values()].some((s) => s.projectId === projectId && isRunning(s.id))) {
-        throw new Error("Stop the running agents in this project first.");
+      if ([...stored.values()].some((s) => s.projectId === projectId && isRunning(s.id)) || team.running(projectId) > 0) {
+        throw new Error("Stop the running agents in this project first. The Live tab of the team lists them.");
       }
       for (const [id, s] of stored) if (s.projectId === projectId) { teardownRuntime(id); stored.delete(id); gitCache.delete(id); }
       for (const [id, r] of races) if (r.projectId === projectId) races.delete(id);
@@ -1741,6 +1772,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
     handlers,
     dispose: async () => {
       clearInterval(timer);
+      const teamDone = team.dispose();
       const runs = [...live.values(), ...[...planners].map((handle) => ({ handle }))].map(({ handle }) => {
         handle.cancel();
         return handle.finished.catch(() => null);
@@ -1748,7 +1780,7 @@ export function createEngine(emit: (e: EngineEvent) => void): { handlers: Handle
       for (const k of scripts.keys()) stopScriptRun(k);
       for (const t of terms.values()) t.pty.kill();
       // Long enough for cancelled runs to close their ledger entries, so their spend is on the record.
-      await Promise.race([Promise.all(runs), new Promise((r) => setTimeout(r, 2500))]);
+      await Promise.race([Promise.all([...runs, teamDone]), new Promise((r) => setTimeout(r, 2500))]);
       disposed = true;
       if (snapshotTimer) clearTimeout(snapshotTimer);
     },

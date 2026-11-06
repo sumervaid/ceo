@@ -35,6 +35,8 @@ export async function launch(env: Record<string, string> = {}, reuse?: { dir: st
     env: {
       ...process.env as Record<string, string>,
       CEO_E2E: "1",
+      // Off screen and never focused. CEO_E2E_SHOW=1 shows the window when watching a run.
+      ...(process.env.CEO_E2E_SHOW ? {} : { CEO_E2E_HIDDEN: "1" }),
       CEO_HOME: home,
       CODEX_HOME: path.join(dir, "codex"),
       CEO_REQUIRE_STUBS: "1",

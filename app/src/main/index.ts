@@ -123,6 +123,8 @@ function createWindow(): void {
       sandbox: true,
       webviewTag: false,
       spellcheck: false,
+      // A hidden test window still renders and runs timers at full speed.
+      backgroundThrottling: !process.env.CEO_E2E_HIDDEN,
     },
   });
   win.once("ready-to-show", () => {
@@ -192,6 +194,15 @@ function menu(): void {
         { label: "Archive", accelerator: "CmdOrCtrl+Shift+A", click: send("archive") },
       ],
     },
+    {
+      label: "Team",
+      submenu: [
+        { label: "Chief of Staff", accelerator: "CmdOrCtrl+Shift+C", click: send("chief") },
+        { label: "Team", accelerator: "CmdOrCtrl+Shift+M", click: send("team") },
+        { label: "Hire an Agent", accelerator: "CmdOrCtrl+Shift+H", click: send("hire") },
+        { label: "New Task", accelerator: "CmdOrCtrl+Shift+T", click: send("new-task") },
+      ],
+    },
     { role: "windowMenu" },
     { role: "help", submenu: [{ label: "Keyboard Shortcuts", accelerator: "CmdOrCtrl+/", click: send("shortcuts") }] },
   ];
@@ -259,6 +270,9 @@ function ipc(): void {
     detail: `CEO ${app.getVersion()}. Automatic updates start with the first signed release.`,
   }));
 }
+
+// Test runs never take focus from whatever the person is doing: no Dock icon, no activation.
+if (process.env.CEO_E2E_HIDDEN && process.platform === "darwin") app.setActivationPolicy("accessory");
 
 if (!app.requestSingleInstanceLock() && !process.env.CEO_E2E) {
   app.quit();

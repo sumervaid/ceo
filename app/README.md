@@ -2,12 +2,32 @@
 
 A Mac app that runs a team of coding agents on the plans already signed in. Each task gets an isolated branch and worktree. No API key is needed.
 
+## Two ways to work
+
+Workspaces are the hands-on loop. One task gets one branch, a chat with the agent, a diff to review, checks and a pull request.
+
+The team page runs the org. Each project has a team of headless agents. Each agent has a brief, a provider, a budget and a permission level.
+
+| Tab | Does |
+| --- | --- |
+| Chief of staff | One conversation staffs the work. The chief hires, writes tasks with a definition of done and starts them. The chief's level sets what it may do. The allowance caps what it may give out. |
+| Team | Hire by hand, from a role, from a company template or from a suggested team. Edit, give a branch, merge, fire. The drawer shows runs, output and the prompt. |
+| Tasks | The queue. A task with checks runs as verified attempts and is done only when an attempt passes. One attempt stays on the assignee's provider. Several attempts let the router compare providers. |
+| Live | Every headless run streams here. Notes between agents sit beside it. |
+| Map | The team around the chief. Lines are notes and work given out. |
+| Approvals | Merges wait here with the evidence. The checkout must be clean. A conflict undoes the merge. |
+| Docket | Files, issues, pages, Hugging Face cards, notes and skills, given to chosen agents. |
+| Mission | The objective, criteria, rules for everyone and checks. Every agent reads it on every run. |
+| Integrations | GitHub, Hugging Face, sandboxes, skills and the ledger check. |
+
+The free plan holds 3 team agents per project. The chief of staff, companies and several attempts per task are part of Pro.
+
 ## Layout
 
 | Path | Holds |
 | --- | --- |
 | `src/main` | The window process: windows, menus, dialogs, notifications and the engine's lifetime. |
-| `src/engine` | Everything the app does, in a process of its own. Wraps the core in `../src/core`. Runs with no window, so tests drive it directly. |
+| `src/engine` | Everything the app does, in a process of its own. Wraps the core in `../src/core`. Runs with no window, so tests drive it directly. `org.ts` holds the team: chief, agents, tasks, approvals. |
 | `src/shared/api.ts` | The contract between the window and the engine. |
 | `src/renderer` | The React interface. |
 | `test/engine` | Engine tests on stub agents. |

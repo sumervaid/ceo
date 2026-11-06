@@ -1,10 +1,11 @@
 import { create } from "zustand";
 
-import type { ChatAttachment, ChatItem, EngineEvent, LicenseState, Readiness, Settings, Snapshot, Workspace } from "../shared/api";
+import type { ChatAttachment, ChatItem, EngineEvent, LicenseState, Org, Readiness, Settings, Snapshot, Workspace } from "../shared/api";
 import { bridge, call, desktop } from "./api";
 
 export type InspectorTab = "changes" | "files" | "checks" | "terminal" | "run" | "record";
-export type Page = { kind: "home" } | { kind: "workspace"; id: string } | { kind: "spend" } | { kind: "insights" } | { kind: "history" } | { kind: "race"; id: string };
+export type OrgTab = "chief" | "team" | "tasks" | "live" | "map" | "approvals" | "docket" | "mission" | "integrations";
+export type Page = { kind: "home" } | { kind: "workspace"; id: string } | { kind: "spend" } | { kind: "insights" } | { kind: "history" } | { kind: "race"; id: string } | { kind: "org"; projectId: string; tab: OrgTab; agent?: string | null };
 export type Dialog =
   | { kind: "new-workspace"; projectId?: string }
   | { kind: "race"; projectId?: string }
@@ -15,7 +16,14 @@ export type Dialog =
   | { kind: "upgrade"; reason?: string }
   | { kind: "shortcuts" }
   | { kind: "palette" }
-  | { kind: "confirm"; title: string; body: string; action: string; danger?: boolean; run: () => void };
+  | { kind: "confirm"; title: string; body: string; action: string; danger?: boolean; run: () => void }
+  | { kind: "hire"; projectId: string; preset?: { name?: string; role?: string; level?: import("../shared/api").Level; isolated?: boolean; budgetUsd?: number } }
+  | { kind: "edit-agent"; projectId: string; name: string }
+  | { kind: "delegate"; projectId: string; agent?: string }
+  | { kind: "task"; projectId: string; assignee?: string }
+  | { kind: "company"; projectId: string }
+  | { kind: "suggest"; projectId: string }
+  | { kind: "broadcast"; projectId: string };
 export type Toast = { id: number; text: string; level: "info" | "error" | "ok"; action?: { label: string; run: () => void } };
 export type Draft = { text: string; attachments: ChatAttachment[] };
 
@@ -54,6 +62,8 @@ type State = {
   inspectorWidth: number;
   sidebarWidth: number;
   collapsed: Record<string, boolean>;
+  orgs: Record<string, Org>;
+  loadOrg(projectId: string): Promise<void>;
   setPage(p: Page): void;
   open(d: Dialog | null): void;
   toast(text: string, level?: Toast["level"], action?: Toast["action"]): void;
@@ -75,7 +85,7 @@ let toastId = 1;
 
 export const useStore = create<State>((set, get) => ({
   ready: false,
-  snapshot: { projects: [], workspaces: [], races: [] },
+  snapshot: { projects: [], workspaces: [], races: [], org: {} },
   settings: null,
   license: null,
   readiness: [],
@@ -92,6 +102,15 @@ export const useStore = create<State>((set, get) => ({
   inspectorWidth: load("ceo.inspectorWidth", 400),
   sidebarWidth: load("ceo.sidebarWidth", 268),
   collapsed: load("ceo.collapsed", {}),
+  orgs: {},
+  loadOrg: async (projectId) => {
+    try {
+      const org = await call("org", { projectId });
+      set((s) => ({ orgs: { ...s.orgs, [projectId]: org } }));
+    } catch {
+      /* the project closed */
+    }
+  },
   setPage: (page) => {
     keep("ceo.page", page);
     set({ page, review: null });
@@ -170,6 +189,16 @@ function chime(kind: "done" | "failed" | "info"): void {
   }
 }
 
+const orgTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Org changes arrive in bursts. One read per burst. */
+function reloadOrg(projectId: string): void {
+  if (orgTimers.has(projectId)) return;
+  orgTimers.set(projectId, setTimeout(() => {
+    orgTimers.delete(projectId);
+    void useStore.getState().loadOrg(projectId);
+  }, 120));
+}
+
 function applyEvent(e: EngineEvent): void {
   const s = useStore.getState();
   switch (e.type) {
@@ -212,6 +241,30 @@ function applyEvent(e: EngineEvent): void {
     case "license":
       useStore.setState({ license: e.license });
       break;
+    case "org":
+      if (s.orgs[e.projectId]) reloadOrg(e.projectId);
+      break;
+    case "org-run": {
+      const o = s.orgs[e.run.projectId];
+      if (!o) break;
+      const runs = o.runs.some((r) => r.key === e.run.key) ? o.runs.map((r) => (r.key === e.run.key ? e.run : r)) : [e.run, ...o.runs];
+      useStore.setState({ orgs: { ...s.orgs, [o.projectId]: { ...o, runs } } });
+      break;
+    }
+    case "org-line": {
+      const o = s.orgs[e.projectId];
+      if (!o) break;
+      const runs = o.runs.map((r) => {
+        if (r.key !== e.key) return r;
+        const lines = r.lines.slice();
+        const last = lines[lines.length - 1];
+        if (e.line.kind === "text" && last?.kind === "text") lines[lines.length - 1] = { kind: "text", text: last.text + e.line.text };
+        else lines.push(e.line);
+        return { ...r, lines: lines.length > 400 ? lines.slice(-400) : lines };
+      });
+      useStore.setState({ orgs: { ...s.orgs, [o.projectId]: { ...o, runs } } });
+      break;
+    }
     default:
       break;
   }
@@ -225,6 +278,7 @@ export async function boot(): Promise<void> {
   const page = useStore.getState().page;
   if (page.kind === "workspace" && !snapshot.workspaces.some((w) => w.id === page.id)) useStore.getState().setPage({ kind: "home" });
   if (page.kind === "race" && !snapshot.races.some((r) => r.id === page.id)) useStore.getState().setPage({ kind: "home" });
+  if (page.kind === "org" && !snapshot.projects.some((p) => p.id === page.projectId)) useStore.getState().setPage({ kind: "home" });
 }
 
 export function useWorkspace(id: string | null): Workspace | undefined {

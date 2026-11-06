@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowRight, BarChart3, CircleDollarSign, Flag, GitBranch, GitPullRequest, History, KeyRound, Layers, Plus, Settings as SettingsIcon, Sparkles, Terminal as TerminalIcon, Trophy, Check, CircleAlert, RefreshCw,
+  ArrowRight, BarChart3, Building2, CircleDollarSign, Crown, Inbox, ListPlus, Radio, UserPlus, Users, Flag, GitBranch, GitPullRequest, History, KeyRound, Layers, Plus, Settings as SettingsIcon, Sparkles, Terminal as TerminalIcon, Trophy, Check, CircleAlert, RefreshCw,
 } from "lucide-react";
 
 import type { ListItem, Mode, PlanDraft, PlannedTask, Provider, Readiness } from "../../shared/api";
@@ -9,6 +9,7 @@ import { mod, modelLabel, money, PROVIDER_LABEL, SHIFT } from "../format";
 import { act, useStore } from "../store";
 import { TerminalView } from "./Inspector";
 import { addProjectFlow } from "./Sidebar";
+import { BroadcastDialog, CompanyDialog, DelegateDialog, EditAgentDialog, HireDialog, SuggestDialog, TaskDialog } from "./OrgDialogs";
 import { Button, Dialog, Empty, Field, Kbd, ProviderMark, Select, Spinner } from "./ui";
 
 function useProject(initial?: string): [string, (v: string) => void] {
@@ -31,17 +32,17 @@ function ProjectSelect({ value, onChange }: { value: string; onChange: (v: strin
   );
 }
 
-function defaultModel(readiness: Readiness[], provider: Provider): string {
+export function defaultModel(readiness: Readiness[], provider: Provider): string {
   const pref = useStore.getState().settings?.defaultModels[provider];
   return pref ?? readiness.find((r) => r.provider === provider)?.defaultModel ?? "";
 }
 
-function firstReady(readiness: Readiness[], preferred?: Provider): Provider {
+export function firstReady(readiness: Readiness[], preferred?: Provider): Provider {
   if (preferred && readiness.find((r) => r.provider === preferred)?.ready) return preferred;
   return readiness.find((r) => r.ready)?.provider ?? preferred ?? "claude";
 }
 
-function ProviderSelect({ value, onChange }: { value: Provider; onChange: (p: Provider) => void }) {
+export function ProviderSelect({ value, onChange }: { value: Provider; onChange: (p: Provider) => void }) {
   const readiness = useStore((s) => s.readiness);
   return (
     <Select<Provider>
@@ -476,7 +477,7 @@ function SettingsDialog({ tab, onClose }: { tab?: "general" | "providers" | "lic
   );
 }
 
-function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
     <div className="toggle-row">
       <div><div>{label}</div>{hint && <small className="muted">{hint}</small>}</div>
@@ -486,6 +487,8 @@ function Toggle({ label, hint, value, onChange }: { label: string; hint?: string
 }
 
 const PRO = [
+  { icon: <Crown size={14} />, title: "Chief of staff", body: "One conversation hires, briefs and starts a whole team." },
+  { icon: <Users size={14} />, title: "Unlimited team", body: "The free plan holds 3 agents per project. Pro adds companies and verified attempts." },
   { icon: <Layers size={14} />, title: "Unlimited workspaces", body: "The free plan holds 3 at a time." },
   { icon: <Flag size={14} />, title: "Race", body: "One task on several agents. A real check picks the winner." },
   { icon: <Sparkles size={14} />, title: "Plan from a goal", body: "One goal becomes reviewed, separate workspaces." },
@@ -531,7 +534,7 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
   const rows: Array<[string, string]> = [
     ["Command palette", mod("K")], ["New workspace", `${mod(SHIFT)}N`], ["Race agents", `${mod(SHIFT)}R`], ["Plan from a goal", `${mod(SHIFT)}G`], ["New chat tab", mod("T")],
     ["Jump to workspace", `${mod("1")} to ${mod("9")}`], ["Review changes", `${mod(SHIFT)}D`], ["Create pull request", `${mod(SHIFT)}P`], ["Terminal", mod("J")], ["Run", mod("R")], ["Stop agent", mod(".")],
-    ["Archive workspace", `${mod(SHIFT)}A`], ["Toggle sidebar", mod("B")], ["Toggle inspector", `${mod("⌥")}B`], ["Add project", mod("O")], ["Settings", mod(",")],
+    ["Archive workspace", `${mod(SHIFT)}A`], ["Chief of staff", `${mod(SHIFT)}C`], ["Team", `${mod(SHIFT)}M`], ["Hire an agent", `${mod(SHIFT)}H`], ["New task", `${mod(SHIFT)}T`], ["Toggle sidebar", mod("B")], ["Toggle inspector", `${mod("⌥")}B`], ["Add project", mod("O")], ["Settings", mod(",")],
   ];
   return (
     <Dialog title="Keyboard shortcuts" onClose={onClose} width={520}>
@@ -564,6 +567,18 @@ function Palette({ onClose }: { onClose: () => void }) {
       a("checks", "Open checks", <Check size={13} />, () => s.setInspector("checks"));
       a("pr", "Create pull request", <GitPullRequest size={13} />, () => s.open({ kind: "create-pr", id: currentW.id }), `${mod(SHIFT)}P`);
       a("proj", "Project settings", <SettingsIcon size={13} />, () => s.open({ kind: "project", projectId: currentW.projectId }));
+    }
+    const orgProject = page.kind === "org" ? page.projectId : currentW?.projectId ?? projects[0]?.id;
+    for (const p of projects) {
+      base.push({ id: `org-${p.id}`, group: "Teams", label: `${p.name} team`, detail: "Chief of staff, agents, tasks", icon: <Users size={13} />, run: () => s.setPage({ kind: "org", projectId: p.id, tab: s.snapshot.org[p.id]?.hasChief ? "chief" : "team" }) });
+    }
+    if (orgProject) {
+      a("chief", "Talk to the chief of staff", <Crown size={13} />, () => s.setPage({ kind: "org", projectId: orgProject, tab: "chief" }), `${mod(SHIFT)}C`);
+      a("hire", "Hire an agent", <UserPlus size={13} />, () => s.open({ kind: "hire", projectId: orgProject }));
+      a("task", "New task", <ListPlus size={13} />, () => s.open({ kind: "task", projectId: orgProject }), `${mod(SHIFT)}T`);
+      a("company", "Start a company", <Building2 size={13} />, () => s.open({ kind: "company", projectId: orgProject }));
+      a("live", "Live agents", <Radio size={13} />, () => s.setPage({ kind: "org", projectId: orgProject, tab: "live" }));
+      a("approvals", "Approvals", <Inbox size={13} />, () => s.setPage({ kind: "org", projectId: orgProject, tab: "approvals" }));
     }
     a("spend", "Spend", <CircleDollarSign size={13} />, () => s.setPage({ kind: "spend" }));
     a("insights", "Insights", <BarChart3 size={13} />, () => s.setPage({ kind: "insights" }));
@@ -624,6 +639,13 @@ export function Dialogs() {
     case "settings": return <SettingsDialog tab={dialog.tab} onClose={close} />;
     case "shortcuts": return <ShortcutsDialog onClose={close} />;
     case "palette": return <Palette onClose={close} />;
+    case "hire": return <HireDialog projectId={dialog.projectId} preset={dialog.preset} onClose={close} />;
+    case "edit-agent": return <EditAgentDialog projectId={dialog.projectId} name={dialog.name} onClose={close} />;
+    case "delegate": return <DelegateDialog projectId={dialog.projectId} agent={dialog.agent} onClose={close} />;
+    case "broadcast": return <BroadcastDialog projectId={dialog.projectId} onClose={close} />;
+    case "task": return <TaskDialog projectId={dialog.projectId} assignee={dialog.assignee} onClose={close} />;
+    case "company": return <CompanyDialog projectId={dialog.projectId} onClose={close} />;
+    case "suggest": return <SuggestDialog projectId={dialog.projectId} onClose={close} />;
     case "upgrade":
       return (
         <Dialog title={<><Trophy size={15} className="title-ic" /> CEO Pro</>} subtitle={dialog.reason} onClose={close} width={560} testId="upgrade-dialog">

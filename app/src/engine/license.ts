@@ -12,6 +12,7 @@ export const LICENSE_PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAg
 export const CHECKOUT_URL: string = process.env.CEO_CHECKOUT_URL ?? "";
 export const TRIAL_DAYS = 14;
 export const FREE_ACTIVE_WORKSPACES = 3;
+export const FREE_TEAM_AGENTS = 3;
 
 const DAY = 86400000;
 
@@ -36,7 +37,7 @@ export function licenseState(input: { key: string | null; firstRunAt: number; no
   const now = input.now ?? Date.now();
   const trialEndsAt = input.firstRunAt + TRIAL_DAYS * DAY;
   const trialDaysLeft = Math.max(0, Math.ceil((trialEndsAt - now) / DAY));
-  const paid = { activeWorkspaces: null, race: true, planner: true, insights: true, exportData: true };
+  const paid = { activeWorkspaces: null, race: true, planner: true, insights: true, exportData: true, teamAgents: null, chief: true, companies: true, attempts: true };
   const base = { trialEndsAt, trialDaysLeft, checkoutUrl: CHECKOUT_URL };
   let error: string | null = null;
   if (input.key) {
@@ -54,7 +55,7 @@ export function licenseState(input: { key: string | null; firstRunAt: number; no
     plan: "free",
     email: null,
     expiresAt: null,
-    limits: { activeWorkspaces: FREE_ACTIVE_WORKSPACES, race: false, planner: false, insights: false, exportData: false },
+    limits: { activeWorkspaces: FREE_ACTIVE_WORKSPACES, race: false, planner: false, insights: false, exportData: false, teamAgents: FREE_TEAM_AGENTS, chief: false, companies: false, attempts: false },
     error,
   };
 }
